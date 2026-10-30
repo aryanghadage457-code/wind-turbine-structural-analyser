@@ -1,0 +1,14 @@
+{
+  "_note": "Tower/hub/rotor values from NREL 5-MW (verify in NREL/TP-500-38060). Nacelle size is our own assumption.",
+  "tower": {
+    "sections": [
+      {"z0": 0.0,  "z1": 22.0, "d0": 6.000, "d1": 5.465, "t": 0.026},
+      {"z0": 22.0, "z1": 44.0, "d0": 5.465, "d1": 4.931, "t": 0.024},
+      {"z0": 44.0, "z1": 66.0, "d0": 4.931, "d1": 4.396, "t": 0.022},
+      {"z0": 66.0, "z1": 87.6, "d0": 4.396, "d1": 3.870, "t": 0.020}
+    ]
+  },
+  "nacelle": {"y_rear": -10.0, "y_front": 4.0, "width": 4.0, "height": 4.8, "t": 0.02},
+  "hub": {"diameter": 3.0, "overhang": 5.0, "t": 0.03},
+  "sources": ["NREL/TP-500-38060 (verify each number)"]
+}

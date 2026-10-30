@@ -1,0 +1,4 @@
+{
+  "_note": "Day 4 checkpoint cylinder: D=2 m, t=0.02 m, L=20 m",
+  "tower": {"sections": [{"z0": 0.0, "z1": 20.0, "d0": 2.0, "d1": 2.0, "t": 0.02}]}
+}

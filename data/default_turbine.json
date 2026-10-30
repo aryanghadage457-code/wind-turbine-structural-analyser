@@ -1,5 +1,5 @@
 {
-  "_note": "Tower/hub/rotor values from NREL 5-MW (verify in NREL/TP-500-38060). Nacelle size is our own assumption.",
+  "_note": "Tower/hub/rotor from NREL 5-MW (verify in NREL/TP-500-38060). Nacelle size and blade stations are placeholders/own assumptions.",
   "tower": {
     "sections": [
       {"z0": 0.0,  "z1": 22.0, "d0": 6.000, "d1": 5.465, "t": 0.026},
@@ -10,5 +10,20 @@
   },
   "nacelle": {"y_rear": -10.0, "y_front": 4.0, "width": 4.0, "height": 4.8, "t": 0.02},
   "hub": {"diameter": 3.0, "overhang": 5.0, "t": 0.03},
+  "blade": {
+    "_note": "PLACEHOLDER stations (approx NREL 5-MW). r = distance from hub centre. Verify chord/twist in NREL/TP-500-38060.",
+    "count": 3,
+    "azimuth_deg": 0.0,
+    "t": 0.02,
+    "stations": [
+      {"r": 0.5,   "chord": 1.8,  "thick": 1.8,  "twist": 13.3},
+      {"r": 3.0,   "chord": 2.0,  "thick": 1.8,  "twist": 13.3},
+      {"r": 8.0,   "chord": 4.0,  "thick": 1.9,  "twist": 13.3},
+      {"r": 13.25, "chord": 4.65, "thick": 1.8,  "twist": 11.5},
+      {"r": 30.0,  "chord": 3.7,  "thick": 0.95, "twist": 6.5},
+      {"r": 46.0,  "chord": 2.6,  "thick": 0.55, "twist": 2.5},
+      {"r": 63.0,  "chord": 1.4,  "thick": 0.25, "twist": 0.1}
+    ]
+  },
   "sources": ["NREL/TP-500-38060 (verify each number)"]
 }

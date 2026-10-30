@@ -1,9 +1,11 @@
 """Default turbine generator (Member 1). Units: metres. Z up, rotor axis +Y.
 Outer SURFACES only (shell model). Wall thickness is a number per tag.
-Tags: Tower_1.. , Nacelle, Hub
+Tags: Tower_1.. , Nacelle, Hub, Blade_1..3
 """
 import json
+import math
 import gmsh
+from geometry.blade import build_blades
 
 occ = gmsh.model.occ
 
@@ -67,44 +69,70 @@ def build_default(params):
     sections = params["tower"]["sections"]
     z_top = sections[-1]["z1"]
     has_head = "nacelle" in params and "hub" in params
+    has_blade = has_head and "blade" in params
 
     tower = _tower_surfaces(sections)
+    blades = []
     if has_head:
         nac, hub = params["nacelle"], params["hub"]
+        hub_c = (0.0, hub["overhang"], z_top + nac["height"] / 2)
         nac_faces = _nacelle_surfaces(nac, z_top)
         hub_face = _hub_surface(hub, nac, z_top)
-        allsurf = [(2, s) for s in tower + nac_faces + hub_face]
-        occ.fragment(allsurf, [])          # make shared edges at all joints
+        if has_blade:
+            blades = build_blades(params["blade"], hub_c)
+        flat = [t for b in blades for t in b]
+        occ.fragment([(2, s) for s in tower + nac_faces + hub_face + flat], [])
     else:
         occ.removeAllDuplicates()
     occ.synchronize()
 
     # ---- classify every surface, delete the pieces that lie inside others
-    groups = {}
-    thickness = {}
-    discard = []
+    groups, thickness, discard = {}, {}, []
+    n_bl = int(params["blade"].get("count", 3)) if has_blade else 0
+    az0 = params["blade"].get("azimuth_deg", 0.0) if has_blade else 0.0
+    root_r = params["blade"]["stations"][0]["chord"] / 2 if has_blade else 0.0
+
+    def in_nacelle_box(x, y, z, eps=1e-6):
+        return (abs(x) <= nac["width"] / 2 + eps and
+                nac["y_rear"] - eps <= y <= nac["y_front"] + eps and
+                z_top - eps <= z <= z_top + nac["height"] + eps)
+
     for (_, s) in gmsh.model.getEntities(2):
         typ = gmsh.model.getType(2, s)
         cx, cy, cz = occ.getCenterOfMass(2, s)
         xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, s)
+        if has_head:
+            dist_hub = math.dist((cx, cy, cz), hub_c)
         if typ in ("Cone", "Cylinder"):
             for i, sec in enumerate(sections):
                 if sec["z0"] - 1e-6 <= cz <= sec["z1"] + 1e-6:
                     groups.setdefault(f"Tower_{i+1}", []).append(s)
                     thickness[f"Tower_{i+1}"] = sec["t"]
-        elif has_head and typ == "Sphere":
-            if cy > nac["y_front"]:
+        elif not has_head:
+            continue
+        elif typ == "Sphere":
+            small = max(xmax - xmin, ymax - ymin, zmax - zmin) < 2 * root_r + 0.3
+            if cy > nac["y_front"] and not (has_blade and small):
                 groups.setdefault("Hub", []).append(s)
                 thickness["Hub"] = hub["t"]
             else:
-                discard.append((2, s))        # hub part inside the nacelle
-        elif has_head:                         # planar box faces
+                discard.append((2, s))        # inside nacelle or inside a blade root
+        elif typ == "Plane" and in_nacelle_box(cx, cy, cz):
             on_front = abs(cy - nac["y_front"]) < 1e-6 and abs(ymax - ymin) < 1e-6
             if on_front and (xmax - xmin) < nac["width"] * 0.99:
                 discard.append((2, s))        # front-face disk inside the hub
             else:
                 groups.setdefault("Nacelle", []).append(s)
                 thickness["Nacelle"] = nac["t"]
+        elif has_blade:
+            if dist_hub < hub["diameter"] / 2:
+                discard.append((2, s))        # blade part inside the hub
+            else:
+                # which blade? angle of the centroid in the rotor plane (X-Z)
+                ang = math.degrees(math.atan2(cx - hub_c[0], cz - hub_c[2])) % 360
+                k = int(round((ang - az0) / (360.0 / n_bl))) % n_bl
+                groups.setdefault(f"Blade_{k+1}", []).append(s)
+                thickness[f"Blade_{k+1}"] = params["blade"]["t"]
     if discard:
         occ.remove(discard, recursive=False)
         occ.synchronize()

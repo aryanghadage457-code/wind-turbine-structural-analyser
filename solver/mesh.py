@@ -22,6 +22,7 @@ def make_cylinder(D=2.0, L=20.0):
     return {"Tower_1": surfs}, [c], area
 
 
+
 def set_size_fields(base_curves, h, h_base, d_refine):
     """Element size h_base at the base curves, growing to h at d_refine metres away."""
     F = gmsh.model.mesh.field
@@ -100,19 +101,76 @@ def fix_inward_elements(nodes, elems):
 
     return elems
 
-def build_mesh(groups, base_curves, total_area, h=0.25, h_base=None,
+
+def get_tower_groups(groups):
+    """Return only the four tower surface groups."""
+    return {
+        name: surfaces
+        for name, surfaces in groups.items()
+        if name.startswith("Tower_")
+    }
+
+def find_base_curves(tower_groups, tol=1e-4):
+    """Find the circular curves at the bottom of the tower."""
+    surfaces = [
+        (2, tag)
+        for tags in tower_groups.values()
+        for tag in tags
+    ]
+
+    boundary = gmsh.model.getBoundary(
+        surfaces, combined=True, oriented=False, recursive=False
+    )
+
+    z_min = min(
+        gmsh.model.getBoundingBox(2, tag)[2]
+        for _, tag in surfaces
+    )
+
+    base_curves = []
+
+    for dim, tag in boundary:
+        if dim != 1:
+            continue
+
+        x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(1, tag)
+
+        if abs(z0 - z_min) < tol and abs(z1 - z_min) < tol:
+            base_curves.append(tag)
+
+    return base_curves
+def calculate_total_area(tower_groups):
+    total = 0.0
+
+    for surfaces in tower_groups.values():
+        for tag in surfaces:
+            total += gmsh.model.occ.getMass(2, tag)
+
+    return total
+
+def build_mesh(groups, base_curves, total_area, h=0.5, h_base=None,
                d_refine=3.0, order=2, tol=0.01,
-               orientation=None):
+               orientation=None, create_groups=True):
+
     """Mesh the current gmsh model and return a contracts.Mesh."""
+
+    tower_groups = get_tower_groups(groups)
+    groups = tower_groups
+
+    base_curves = find_base_curves(tower_groups)
+    total_area = calculate_total_area(tower_groups)
+
     h_base = h_base or h / 2
     n_est = estimate_elements(total_area, h)
+
     print(f"Estimated elements: ~{n_est}")
     if n_est > MAX_ELEMS_WARN:
         print("WARNING: mesh may be very large and slow. Increase element size.")
 
-    for name, surfs in groups.items():
-        pg = gmsh.model.addPhysicalGroup(2, surfs)
-        gmsh.model.setPhysicalName(2, pg, name)
+    if create_groups:
+        for name, surfs in groups.items():
+            pg = gmsh.model.addPhysicalGroup(2, surfs)
+            gmsh.model.setPhysicalName(2, pg, name)
 
     set_size_fields(base_curves, h, h_base, d_refine)
     gmsh.model.mesh.generate(2)
@@ -151,7 +209,157 @@ def build_mesh(groups, base_curves, total_area, h=0.25, h_base=None,
 
     nodes = coords[used]
     elems = remap[elems]
+    # Check: Element connectivity
+    print("\n--- Element Connectivity Check ---")
 
+    print("Minimum node index:", elems.min())
+    print("Maximum node index:", elems.max())
+    print("Total available nodes:", len(nodes))
+
+    invalid_mask = (elems < 0) | (elems >= len(nodes))
+    invalid_count = np.sum(invalid_mask)
+
+    print("Invalid node references:", invalid_count)
+
+    if invalid_count > 0:
+        raise ValueError("Mesh contains invalid node references!")
+
+    print("Element connectivity check passed!")    
+
+    # Check: Duplicate elements
+    print("\n--- Duplicate Element Check ---")
+
+    sorted_elems = np.sort(elems, axis=1)
+
+    unique_elems = np.unique(sorted_elems, axis=0)
+
+    duplicate_count = len(elems) - len(unique_elems)
+
+    print("Total elements:", len(elems))
+    print("Unique elements:", len(unique_elems))
+    print("Duplicate elements:", duplicate_count)
+
+    if duplicate_count > 0:
+        raise ValueError("Duplicate elements detected!")
+
+    print("Duplicate element check passed!")
+
+
+
+
+    # Check: Surface normal orientation for tapered tower
+    print("\n--- Surface Normal Check ---")
+
+    # Get the three corner nodes of every S6 triangular element
+    corner_nodes = nodes[elems[:, :3]]
+
+    # Calculate two edge vectors
+    v1 = corner_nodes[:, 1] - corner_nodes[:, 0]
+    v2 = corner_nodes[:, 2] - corner_nodes[:, 0]
+
+    # Cross product gives the surface normal
+    normals = np.cross(v1, v2)
+
+    # Calculate element centroids
+    centroids = np.mean(corner_nodes, axis=1)
+
+    # Radial direction from the tower's central Z-axis
+    radial = centroids.copy()
+    radial[:, 2] = 0.0
+
+    # Dot product tells us whether normals point inward or outward
+    normal_direction = np.einsum("ij,ij->i", normals, radial)
+
+    outward_count = np.sum(normal_direction > 0)
+    inward_count = np.sum(normal_direction < 0)
+    zero_count = np.sum(np.isclose(normal_direction, 0.0))
+
+    print("Outward-facing elements:", outward_count)
+    print("Inward-facing elements:", inward_count)
+    print("Zero/uncertain orientation:", zero_count)    
+    # Check: Triangle element aspect ratio
+    print("\n--- Element Quality Check ---")
+
+    # Get the three corner nodes of each triangular element
+    corner_nodes = nodes[elems[:, :3]]
+
+    # Calculate the three edge lengths
+    edge_1 = np.linalg.norm(
+        corner_nodes[:, 1] - corner_nodes[:, 0], axis=1
+    )
+
+    edge_2 = np.linalg.norm(
+        corner_nodes[:, 2] - corner_nodes[:, 1], axis=1
+    )
+
+    edge_3 = np.linalg.norm(
+        corner_nodes[:, 0] - corner_nodes[:, 2], axis=1
+    )
+
+    # Find the longest edge of each triangle
+    longest_edge = np.maximum.reduce([edge_1, edge_2, edge_3])
+
+    # Calculate triangle area using the cross product
+    v1 = corner_nodes[:, 1] - corner_nodes[:, 0]
+    v2 = corner_nodes[:, 2] - corner_nodes[:, 0]
+
+    areas = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1)
+
+    # Shortest altitude = 2 * Area / longest edge
+    shortest_altitude = 2.0 * areas / longest_edge
+
+    # Aspect ratio = longest edge / shortest altitude
+    aspect_ratios = longest_edge / shortest_altitude
+
+    print("Minimum aspect ratio:", np.min(aspect_ratios))
+    print("Maximum aspect ratio:", np.max(aspect_ratios))
+    print("Average aspect ratio:", np.mean(aspect_ratios))
+
+    # Count elements with high aspect ratios
+    poor_elements = np.sum(aspect_ratios > 5.0)
+
+    print("Elements with aspect ratio > 5:", poor_elements)
+
+
+    # Check: Connectivity between adjacent tower sections
+    print("\n--- Tower Section Interface Check ---")
+
+    interface_heights = [22.0, 44.0, 66.0]
+    group_names = ["Tower_1", "Tower_2", "Tower_3", "Tower_4"]
+
+    for i, height in enumerate(interface_heights):
+
+        # Elements belonging to the lower section
+        lower_elements = elems[elem_group == i]
+
+        # Elements belonging to the upper section
+        upper_elements = elems[elem_group == i + 1]
+
+        # Find all nodes used by each section
+        lower_nodes = np.unique(lower_elements)
+        upper_nodes = np.unique(upper_elements)
+
+        # Find nodes shared by both sections
+        shared_nodes = np.intersect1d(lower_nodes, upper_nodes)
+
+        # Check that shared nodes lie at the expected interface
+        interface_nodes = shared_nodes[
+            np.isclose(nodes[shared_nodes, 2], height, atol=0.01)
+        ]
+
+        print(
+            f"{group_names[i]} - {group_names[i + 1]} "
+            f"at z = {height} m:"
+        )
+        print("  Shared nodes:", len(shared_nodes))
+        print("  Shared nodes at interface:", len(interface_nodes))
+
+        if len(interface_nodes) == 0:
+            print("  WARNING: No shared interface nodes detected!")
+        else:
+            print("  Interface connectivity check passed!")
+            
+                
     # Correct orientation for the Z-axis test cylinder
     if orientation == "cylinder_z":
         elems = fix_inward_elements(nodes, elems)

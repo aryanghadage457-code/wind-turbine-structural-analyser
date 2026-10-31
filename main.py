@@ -3,6 +3,7 @@ import json
 import shutil
 
 from pathlib import Path
+from PySide6.QtCore import QTimer, Qt
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,16 +36,14 @@ class Application(QMainWindow):
             "Wind Turbine Structural Analyser"
         )
 
-        self.resize(1450, 900)
+        
 
         self.current_project = None
 
-        # Display Start Screen
         self.start_page = StartPage()
 
         self.setCentralWidget(self.start_page)
 
-        # Connect Start Screen buttons
         self.start_page.new_project_requested.connect(
             self.create_project
         )
@@ -53,9 +52,7 @@ class Application(QMainWindow):
             self.open_existing_project
         )
 
-        # Load recent projects
         self.refresh_recent_projects()
-
 
     # ==========================================
     # REFRESH RECENT PROJECTS
@@ -67,7 +64,6 @@ class Application(QMainWindow):
 
         self.start_page.update_recent_projects(projects)
 
-
     # ==========================================
     # CREATE NEW PROJECT
     # ==========================================
@@ -75,8 +71,6 @@ class Application(QMainWindow):
     def create_project(self):
 
         self.current_project = None
-
-        # STEP 1: Project Details Dialog
 
         project_dialog = ProjectDialog(self)
 
@@ -90,8 +84,7 @@ class Application(QMainWindow):
 
             return
 
-        # STEP 2: Select Model Source
-
+        # Select model source
         source_dialog = ModelSourceDialog(self)
 
         if not source_dialog.exec():
@@ -102,10 +95,7 @@ class Application(QMainWindow):
 
         model_config = {}
 
-        # ======================================
-        # OPTION A: BUILT-IN CAD MODEL
-        # ======================================
-
+        # Built-in CAD model
         if model_source == "builtin":
 
             config_dialog = TurbineConfigDialog(self)
@@ -115,29 +105,18 @@ class Application(QMainWindow):
                 return
 
             model_config = {
-
                 "model_source": "builtin",
-
                 "dimensions": config_dialog.dimensions
-
             }
 
-        # ======================================
-        # OPTION B: IMPORT STEP MODEL
-        # ======================================
-
+        # Imported STEP model
         elif model_source == "step":
 
             file_path, _ = QFileDialog.getOpenFileName(
-
                 self,
-
                 "Import STEP Model",
-
                 "",
-
                 "STEP Files (*.step *.stp)"
-
             )
 
             if not file_path:
@@ -149,43 +128,29 @@ class Application(QMainWindow):
             if not step_path.is_file():
 
                 QMessageBox.warning(
-
                     self,
-
                     "Invalid STEP File",
-
                     "The selected STEP file does not exist."
-
                 )
 
                 return
 
             model_config = {
-
                 "model_source": "step",
-
                 "step_file": str(step_path.resolve())
-
             }
 
         else:
 
             QMessageBox.warning(
-
                 self,
-
                 "Model Source Error",
-
                 "Please select a valid model source."
-
             )
 
             return
 
-        # ======================================
-        # STEP 3: SAVE PROJECT
-        # ======================================
-
+        # Save project
         self.current_project = project_data
 
         try:
@@ -193,13 +158,9 @@ class Application(QMainWindow):
             self.save_project(model_config)
 
             QMessageBox.information(
-
                 self,
-
                 "Project Created",
-
                 "Your project has been created successfully."
-
             )
 
             self.open_workspace()
@@ -207,17 +168,12 @@ class Application(QMainWindow):
         except (OSError, ValueError, KeyError, TypeError) as error:
 
             QMessageBox.critical(
-
                 self,
-
                 "Project Creation Failed",
-
                 f"Unable to save project:\n{error}"
-
             )
 
             self.current_project = None
-
 
     # ==========================================
     # SAVE PROJECT
@@ -235,98 +191,64 @@ class Application(QMainWindow):
             self.current_project["project_path"]
         )
 
-        # Prevent overwriting an existing project
         if project_path.exists():
 
             raise FileExistsError(
                 "The selected project folder already exists."
             )
 
-        # Project folder structure
         folders = [
-
             "geometry",
-
             "mesh",
-
             "results",
-
             "reports",
-
             "config"
-
         ]
 
         try:
 
-            # Create main project directory
             project_path.mkdir(
                 parents=True,
                 exist_ok=False
             )
 
-            # Create subdirectories
             for folder in folders:
 
                 (project_path / folder).mkdir(
                     exist_ok=True
                 )
 
-            # Project metadata
             project_metadata = {
-
                 **self.current_project,
-
                 "model_source": model_config["model_source"]
-
             }
 
-            # Save project.json
             with open(
-
                 project_path / "project.json",
-
                 "w",
-
                 encoding="utf-8"
-
             ) as file:
 
                 json.dump(
-
                     project_metadata,
-
                     file,
-
                     indent=4
-
                 )
 
-            # Save model_config.json
             with open(
-
                 project_path / "config" / "model_config.json",
-
                 "w",
-
                 encoding="utf-8"
-
             ) as file:
 
                 json.dump(
-
                     model_config,
-
                     file,
-
                     indent=4
-
                 )
 
-            # Update current project
             self.current_project = project_metadata
 
-            # Add project to Recent Projects
             projects = add_recent_project(
                 self.current_project
             )
@@ -335,7 +257,6 @@ class Application(QMainWindow):
 
         except Exception:
 
-            # Remove incomplete project folder
             if project_path.exists():
 
                 shutil.rmtree(
@@ -344,7 +265,6 @@ class Application(QMainWindow):
                 )
 
             raise
-
 
     # ==========================================
     # OPEN EXISTING PROJECT
@@ -359,13 +279,9 @@ class Application(QMainWindow):
         if not metadata_file.is_file():
 
             QMessageBox.warning(
-
                 self,
-
                 "Project Not Found",
-
                 "The project configuration file could not be found."
-
             )
 
             self.refresh_recent_projects()
@@ -375,13 +291,9 @@ class Application(QMainWindow):
         try:
 
             with open(
-
                 metadata_file,
-
                 "r",
-
                 encoding="utf-8"
-
             ) as file:
 
                 self.current_project = json.load(file)
@@ -390,28 +302,21 @@ class Application(QMainWindow):
                 project_path.resolve()
             )
 
-            # Update Recent Projects
             projects = add_recent_project(
                 self.current_project
             )
 
             self.start_page.update_recent_projects(projects)
 
-            # Open Engineering Workspace
             self.open_workspace()
 
         except (OSError, json.JSONDecodeError, KeyError) as error:
 
             QMessageBox.critical(
-
                 self,
-
                 "Project Error",
-
                 f"Unable to open project:\n{error}"
-
             )
-
 
     # ==========================================
     # OPEN ENGINEERING WORKSPACE
@@ -419,12 +324,18 @@ class Application(QMainWindow):
 
     def open_workspace(self):
 
-        self.workspace = MainWindow()
+        self.workspace = MainWindow(
+            self.current_project
+        )
 
         self.workspace.show()
 
-        self.close()
+        QTimer.singleShot(
+            100,
+            self.workspace.showMaximized
+        )
 
+        self.close()
 
 # ==============================================
 # APPLICATION ENTRY POINT
@@ -438,6 +349,15 @@ if __name__ == "__main__":
 
     window = Application()
 
+    # First display the window
     window.show()
+
+    # Then maximize it after the window is displayed
+    QTimer.singleShot(
+        100,
+        lambda: window.setWindowState(
+            window.windowState() | Qt.WindowMaximized
+        )
+    )
 
     sys.exit(app.exec())

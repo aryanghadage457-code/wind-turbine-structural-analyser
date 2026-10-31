@@ -8,13 +8,19 @@ from PySide6.QtWidgets import (
     QPushButton
 )
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 
 class DashboardPage(QWidget):
 
-    def __init__(self):
+    geometry_requested = Signal()
+    analysis_requested = Signal()
+
+    def __init__(self, project_data=None):
+
         super().__init__()
+
+        self.project_data = project_data or {}
 
         self.setObjectName("dashboardPage")
 
@@ -23,26 +29,53 @@ class DashboardPage(QWidget):
         main_layout.setSpacing(22)
 
         # Welcome section
-        welcome = QLabel("Welcome to Wind Turbine Analysis")
+        project_name = self.project_data.get(
+            "project_name",
+            "New Wind Turbine Project"
+        )
+
+        welcome = QLabel(f"Welcome to {project_name}")
         welcome.setObjectName("welcomeTitle")
+        welcome.setWordWrap(True)
 
         subtitle = QLabel(
-            "Structural Analysis and Performance Evaluation"
+            "Structural Analysis and Engineering Workspace"
         )
         subtitle.setObjectName("subtitle")
 
         main_layout.addWidget(welcome)
         main_layout.addWidget(subtitle)
 
-        # Information cards
+        # Project information
+        info_title = QLabel("Project Overview")
+        info_title.setObjectName("sectionTitle")
+
+        main_layout.addWidget(info_title)
+
         cards_layout = QGridLayout()
         cards_layout.setSpacing(15)
 
+        model_source = self.project_data.get(
+            "model_source",
+            "Not configured"
+        )
+
+        if model_source == "builtin":
+            model_source = "Built-in CAD Model"
+
+        elif model_source == "step":
+            model_source = "Imported STEP Model"
+
+        project_location = self.project_data.get(
+            "project_path",
+            "Not available"
+        )
+
         card_data = [
-            ("TURBINE HEIGHT", "90 m"),
-            ("WIND SPEED", "45 m/s"),
-            ("SELECTED MATERIAL", "Structural Steel"),
-            ("ANALYSIS STATUS", "Not Started")
+            ("PROJECT NAME", project_name),
+            ("MODEL SOURCE", model_source),
+            ("ANALYSIS STATUS", "Not Started"),
+            ("PROJECT LOCATION", project_location)
         ]
 
         for index, (title, value) in enumerate(card_data):
@@ -65,8 +98,8 @@ class DashboardPage(QWidget):
 
             cards_layout.addWidget(
                 card,
-                0,
-                index
+                index // 2,
+                index % 2
             )
 
         main_layout.addLayout(cards_layout)
@@ -80,118 +113,84 @@ class DashboardPage(QWidget):
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(15)
 
-        self.new_analysis_btn = QPushButton(
-            "+ Create New Analysis"
-        )
-
-        self.import_btn = QPushButton(
-            "Import STEP Model"
-        )
-
-        self.load_btn = QPushButton(
-            "Load Existing Project"
-        )
+        self.geometry_btn = QPushButton("Open Geometry")
+        self.analysis_btn = QPushButton("Start Analysis")
 
         for button in [
-            self.new_analysis_btn,
-            self.import_btn,
-            self.load_btn
+            self.geometry_btn,
+            self.analysis_btn
         ]:
+
             button.setMinimumHeight(48)
             button.setCursor(Qt.PointingHandCursor)
+
             actions_layout.addWidget(button)
 
         main_layout.addLayout(actions_layout)
 
-        # Recent projects
-        recent_title = QLabel("Recent Projects")
-        recent_title.setObjectName("sectionTitle")
-
-        main_layout.addWidget(recent_title)
-
-        recent_box = QFrame()
-        recent_box.setObjectName("recentBox")
-
-        recent_layout = QVBoxLayout(recent_box)
-
-        recent_label = QLabel(
-            "No recent projects available.\n"
-            "Create a new analysis to get started."
+        self.geometry_btn.clicked.connect(
+            self.geometry_requested.emit
         )
 
-        recent_label.setObjectName("recentText")
-        recent_label.setAlignment(Qt.AlignCenter)
-
-        recent_layout.addWidget(recent_label)
-
-        main_layout.addWidget(recent_box)
+        self.analysis_btn.clicked.connect(
+            self.analysis_requested.emit
+        )
 
         main_layout.addStretch()
 
         # Styling
         self.setStyleSheet("""
             QWidget#dashboardPage {
-                background-color: #101923;
+                background-color: #17191D;
             }
 
             QLabel#welcomeTitle {
-                color: white;
+                color: #F2F3F5;
                 font-size: 27px;
                 font-weight: bold;
             }
 
             QLabel#subtitle {
-                color: #91a4b8;
+                color: #A5ABB4;
                 font-size: 14px;
             }
 
             QFrame#infoCard {
-                background-color: #1b2938;
-                border: 1px solid #2b3d50;
-                border-radius: 10px;
-                min-height: 110px;
+                background-color: #292D34;
+                border: 1px solid #414751;
+                border-radius: 9px;
+                min-height: 100px;
             }
 
             QLabel#cardTitle {
-                color: #9aafc4;
-                font-size: 12px;
+                color: #A5ABB4;
+                font-size: 11px;
                 font-weight: bold;
             }
 
             QLabel#cardValue {
-                color: white;
-                font-size: 21px;
+                color: #F2F3F5;
+                font-size: 17px;
                 font-weight: bold;
             }
 
             QLabel#sectionTitle {
-                color: white;
+                color: #F2F3F5;
                 font-size: 19px;
                 font-weight: bold;
             }
 
             QPushButton {
-                background-color: #1769aa;
+                background-color: #0078D4;
                 color: white;
                 border: none;
                 border-radius: 7px;
                 padding: 10px;
                 font-size: 13px;
+                font-weight: bold;
             }
 
             QPushButton:hover {
-                background-color: #2585cf;
-            }
-
-            QFrame#recentBox {
-                background-color: #1b2938;
-                border: 1px solid #2b3d50;
-                border-radius: 10px;
-                min-height: 110px;
-            }
-
-            QLabel#recentText {
-                color: #91a4b8;
-                font-size: 14px;
+                background-color: #168DE5;
             }
         """)

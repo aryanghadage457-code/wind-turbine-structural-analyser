@@ -1,117 +1,65 @@
+
 import numpy as np
 import gmsh
+
+from collections import defaultdict
 from contracts import Mesh
 
-TRI_FACTOR = 2.31          # elements ~ 2.31 * area / h^2 for triangles
+
+TRI_FACTOR = 2.31
 MAX_ELEMS_WARN = 200_000
-GMSH_TYPE_K = {2: 3, 9: 6}  # gmsh 3-node tri, 6-node tri -> nodes per element
+
+GMSH_TYPE_K = {
+    2: 3,   # T3
+    9: 6    # S6
+}
+
+GROUP_SIZES = {
+    "Nacelle": 0.6,
+    "Hub": 0.4,
+    "Blade_1": 0.8,
+    "Blade_2": 0.8,
+    "Blade_3": 0.8,
+}
 
 
-def estimate_elements(total_area_m2, h):
-    """Estimated triangle count. total_area in m^2, h in m."""
-    return int(TRI_FACTOR * total_area_m2 / h**2)
+# =========================================================
+# BASIC GEOMETRY FUNCTIONS
+# =========================================================
+
+def estimate_elements(area, h):
+    return int(TRI_FACTOR * area / h**2)
 
 
 def make_cylinder(D=2.0, L=20.0):
-    """Surface-only cylinder. Returns ({group: [surface tags]}, base_curve_tags, area)."""
-    c = gmsh.model.occ.addCircle(0, 0, 0, D / 2)
-    out = gmsh.model.occ.extrude([(1, c)], 0, 0, L)
-    gmsh.model.occ.synchronize()
-    surfs = [t for d, t in out if d == 2]
-    area = np.pi * D * L
-    return {"Tower_1": surfs}, [c], area
+    """Create a surface-only cylinder for testing."""
 
+    circle = gmsh.model.occ.addCircle(0, 0, 0, D / 2)
 
-
-def set_size_fields(base_curves, h, h_base, d_refine):
-    """Element size h_base at the base curves, growing to h at d_refine metres away."""
-    F = gmsh.model.mesh.field
-    f1 = F.add("Distance")
-    F.setNumbers(f1, "CurvesList", base_curves)
-    F.setNumber(f1, "Sampling", 200)
-    f2 = F.add("Threshold")
-    F.setNumber(f2, "InField", f1)
-    F.setNumber(f2, "SizeMin", h_base)
-    F.setNumber(f2, "SizeMax", h)
-    F.setNumber(f2, "DistMin", 0.0)
-    F.setNumber(f2, "DistMax", d_refine)
-    F.setAsBackgroundMesh(f2)
-    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-    gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
-    gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-
-def normal_check(nodes, elems):
-    """Check whether cylindrical shell elements face outward."""
-
-    # Get the three corner nodes of every S6 element
-    p1 = nodes[elems[:, 0]]
-    p2 = nodes[elems[:, 1]]
-    p3 = nodes[elems[:, 2]]
-
-    # Calculate element normal using cross product
-    a = p2 - p1
-    b = p3 - p1
-    normals = np.cross(a, b)
-
-    # Calculate element centres
-    centres = (p1 + p2 + p3) / 3.0
-
-    # Radial direction from cylinder axis
-    radial = np.column_stack((
-        centres[:, 0],
-        centres[:, 1],
-        np.zeros(len(centres))
-    ))
-
-    # Positive dot product means outward
-    dot_products = np.sum(normals * radial, axis=1)
-
-    outward = dot_products > 1e-12
-    inward = dot_products < -1e-12
-    uncertain = ~(outward | inward)
-
-    print("\n--- Shell Normal Check ---")
-    print("Outward elements:", np.sum(outward))
-    print("Inward elements:", np.sum(inward))
-    print("Uncertain elements:", np.sum(uncertain))
-
-    return inward
-
-def fix_inward_elements(nodes, elems):
-    """Reverse the node ordering of inward-facing S3/S6 elements."""
-
-    inward = normal_check(nodes, elems)
-
-    elems = elems.copy()
-
-    # Reverse corner-node ordering
-    elems[inward, 1], elems[inward, 2] = (
-        elems[inward, 2].copy(),
-        elems[inward, 1].copy()
+    out = gmsh.model.occ.extrude(
+        [(1, circle)], 0, 0, L
     )
 
-    # Also reverse corresponding midside nodes for S6
-    if elems.shape[1] == 6:
-        elems[inward, 3], elems[inward, 5] = (
-            elems[inward, 5].copy(),
-            elems[inward, 3].copy()
-        )
+    gmsh.model.occ.synchronize()
 
-    print("\nCorrected inward-facing elements:", np.sum(inward))
+    surfaces = [
+        tag for dim, tag in out if dim == 2
+    ]
 
-    return elems
+    return {"Tower_1": surfaces}, [circle], np.pi * D * L
 
 
 def get_tower_groups(groups):
-    """Return only the four tower surface groups."""
     return {
         name: surfaces
         for name, surfaces in groups.items()
         if name.startswith("Tower_")
     }
 
+
 def find_base_curves(tower_groups, tol=1e-4):
-    """Find the circular curves at the bottom of the tower."""
+    """Find bottom boundary curves of tower surfaces."""
+
     surfaces = [
         (2, tag)
         for tags in tower_groups.values()
@@ -119,7 +67,10 @@ def find_base_curves(tower_groups, tol=1e-4):
     ]
 
     boundary = gmsh.model.getBoundary(
-        surfaces, combined=True, oriented=False, recursive=False
+        surfaces,
+        combined=True,
+        oriented=False,
+        recursive=False
     )
 
     z_min = min(
@@ -130,355 +81,1272 @@ def find_base_curves(tower_groups, tol=1e-4):
     base_curves = []
 
     for dim, tag in boundary:
+
         if dim != 1:
             continue
 
-        x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(1, tag)
+        box = gmsh.model.getBoundingBox(1, tag)
 
-        if abs(z0 - z_min) < tol and abs(z1 - z_min) < tol:
+        if (
+            abs(box[2] - z_min) < tol
+            and abs(box[5] - z_min) < tol
+        ):
             base_curves.append(tag)
 
+    if not base_curves:
+        raise ValueError("Could not identify tower base curves.")
+
     return base_curves
-def calculate_total_area(tower_groups):
+
+
+def calculate_total_area(groups):
     total = 0.0
 
-    for surfaces in tower_groups.values():
+    for surfaces in groups.values():
         for tag in surfaces:
             total += gmsh.model.occ.getMass(2, tag)
 
     return total
 
-def build_mesh(groups, base_curves, total_area, h=0.5, h_base=None,
-               d_refine=3.0, order=2, tol=0.01,
-               orientation=None, create_groups=True):
 
-    """Mesh the current gmsh model and return a contracts.Mesh."""
+# =========================================================
+# MESH SIZE CONTROL
+# =========================================================
 
-    tower_groups = get_tower_groups(groups)
-    groups = tower_groups
+def set_tower_base_refinement(
+    base_curves,
+    h=1.0,
+    h_base=0.5,
+    d_refine=6.0
+):
+    """Refine mesh near the tower foundation."""
 
-    base_curves = find_base_curves(tower_groups)
-    total_area = calculate_total_area(tower_groups)
+    field = gmsh.model.mesh.field
 
-    h_base = h_base or h / 2
-    n_est = estimate_elements(total_area, h)
+    distance = field.add("Distance")
 
-    print(f"Estimated elements: ~{n_est}")
-    if n_est > MAX_ELEMS_WARN:
-        print("WARNING: mesh may be very large and slow. Increase element size.")
+    field.setNumbers(
+        distance, "CurvesList", base_curves
+    )
 
-    if create_groups:
-        for name, surfs in groups.items():
-            pg = gmsh.model.addPhysicalGroup(2, surfs)
-            gmsh.model.setPhysicalName(2, pg, name)
+    field.setNumber(
+        distance, "Sampling", 200
+    )
 
-    set_size_fields(base_curves, h, h_base, d_refine)
-    gmsh.model.mesh.generate(2)
-    if order == 2:
-        gmsh.model.mesh.setOrder(2)
+    threshold = field.add("Threshold")
 
-    # nodes
+    field.setNumber(
+        threshold, "InField", distance
+    )
+
+    field.setNumber(
+        threshold, "SizeMin", h_base
+    )
+
+    field.setNumber(
+        threshold, "SizeMax", h
+    )
+
+    field.setNumber(
+        threshold, "DistMin", 0.0
+    )
+
+    field.setNumber(
+        threshold, "DistMax", d_refine
+    )
+
+    field.setAsBackgroundMesh(threshold)
+
+
+def apply_group_sizes(groups):
+    """Apply component-specific mesh sizes."""
+
+    for name, surfaces in groups.items():
+
+        if name not in GROUP_SIZES:
+            continue
+
+        boundary = gmsh.model.getBoundary(
+            [(2, tag) for tag in surfaces],
+            combined=False,
+            oriented=False,
+            recursive=True
+        )
+
+        points = [
+            (dim, tag)
+            for dim, tag in boundary
+            if dim == 0
+        ]
+
+        if points:
+            gmsh.model.mesh.setSize(
+                points, GROUP_SIZES[name]
+            )
+
+
+def create_physical_groups(groups):
+    """Create physical groups for turbine components."""
+
+    existing = gmsh.model.getPhysicalGroups(2)
+
+    for name, surfaces in groups.items():
+
+        matching = [
+            tag
+            for dim, tag in existing
+            if gmsh.model.getPhysicalName(dim, tag) == name
+        ]
+
+        if matching:
+            pg = matching[0]
+        else:
+            pg = gmsh.model.addPhysicalGroup(2, surfaces)
+
+        gmsh.model.setPhysicalName(2, pg, name)
+
+
+# =========================================================
+# MESH EXTRACTION
+# =========================================================
+
+def extract_mesh(groups, order=2):
+    """Extract nodes and elements, preserving group identity."""
+
     tags, coords, _ = gmsh.model.mesh.getNodes()
+
     coords = coords.reshape(-1, 3)
-    lookup = np.full(int(tags.max()) + 1, -1, dtype=int)
-    lookup[tags.astype(int)] = np.arange(len(tags))
 
-    # elements, one group at a time
+    lookup = {
+        int(tag): i for i, tag in enumerate(tags)
+    }
+
     group_names = list(groups.keys())
-    elem_list, grp_list, k_seen = [], [], set()
-    for gi, name in enumerate(group_names):
-        for s in groups[name]:
-            types, _, ntags = gmsh.model.mesh.getElements(2, s)
-            for t, nt in zip(types, ntags):
-                if t not in GMSH_TYPE_K:
-                    raise ValueError(f"Unsupported gmsh element type {t} in {name}")
-                k = GMSH_TYPE_K[t]
-                k_seen.add(k)
-                conn = lookup[nt.astype(int).reshape(-1, k)]
-                elem_list.append(conn)
-                grp_list.append(np.full(len(conn), gi))
-    if len(k_seen) != 1:
-        raise ValueError(f"Mixed element types in mesh (nodes per element: {k_seen})")
-    elems = np.vstack(elem_list)
-    elem_group = np.concatenate(grp_list)
 
-    # drop nodes not used by any element, renumber
+    elem_list = []
+    group_list = []
+    element_orders = set()
+
+    for gi, name in enumerate(group_names):
+
+        for surface in groups[name]:
+
+            types, _, element_tags = (
+                gmsh.model.mesh.getElements(2, surface)
+            )
+
+            for element_type, connectivity in zip(
+                types, element_tags
+            ):
+
+                if element_type not in GMSH_TYPE_K:
+                    raise ValueError(
+                        f"Unsupported element type {element_type} "
+                        f"in group {name}"
+                    )
+
+                k = GMSH_TYPE_K[element_type]
+                element_orders.add(k)
+
+                raw = connectivity.reshape(-1, k)
+
+                conn = np.array([
+                    [lookup[int(tag)] for tag in row]
+                    for row in raw
+                ], dtype=int)
+
+                elem_list.append(conn)
+
+                group_list.append(
+                    np.full(len(conn), gi, dtype=int)
+                )
+
+    if element_orders != {6}:
+        raise ValueError(
+            f"Expected only S6 elements. Found: {element_orders}"
+        )
+
+    elems = np.vstack(elem_list)
+    elem_group = np.concatenate(group_list)
+
     used = np.unique(elems)
+
     remap = np.full(len(coords), -1, dtype=int)
     remap[used] = np.arange(len(used))
 
     nodes = coords[used]
     elems = remap[elems]
-    # Check: Element connectivity
-    print("\n--- Element Connectivity Check ---")
 
-    print("Minimum node index:", elems.min())
-    print("Maximum node index:", elems.max())
-    print("Total available nodes:", len(nodes))
-
-    invalid_mask = (elems < 0) | (elems >= len(nodes))
-    invalid_count = np.sum(invalid_mask)
-
-    print("Invalid node references:", invalid_count)
-
-    if invalid_count > 0:
-        raise ValueError("Mesh contains invalid node references!")
-
-    print("Element connectivity check passed!")    
-
-    # Check: Duplicate elements
-    print("\n--- Duplicate Element Check ---")
-
-    sorted_elems = np.sort(elems, axis=1)
-
-    unique_elems = np.unique(sorted_elems, axis=0)
-
-    duplicate_count = len(elems) - len(unique_elems)
-
-    print("Total elements:", len(elems))
-    print("Unique elements:", len(unique_elems))
-    print("Duplicate elements:", duplicate_count)
-
-    if duplicate_count > 0:
-        raise ValueError("Duplicate elements detected!")
-
-    print("Duplicate element check passed!")
+    return nodes, elems, elem_group, group_names
 
 
+# =========================================================
+# ELEMENT QUALITY
+# =========================================================
+
+def diagnose_element_quality(groups, stage, expected_type):
+
+    print(f"\n{'=' * 55}")
+    print(f"ELEMENT QUALITY: {stage}")
+    print(f"{'=' * 55}")
+
+    totals = {
+        "total_elements": 0,
+        "low_quality": 0,
+        "negative_sicn": 0,
+        "negative_detjac": 0
+    }
+
+    for name, surfaces in groups.items():
+
+        print(f"\n{name}:")
+
+        for surface in surfaces:
+
+            types, element_tags, _ = (
+                gmsh.model.mesh.getElements(2, surface)
+            )
+
+            for element_type, tags in zip(types, element_tags):
+
+                if element_type != expected_type:
+                    continue
+
+                tags = np.asarray(tags, dtype=np.int64)
+
+                if len(tags) == 0:
+                    continue
+
+                sicn = np.asarray(
+                    gmsh.model.mesh.getElementQualities(
+                        tags.tolist(), "minSICN"
+                    )
+                )
+
+                detjac = np.asarray(
+                    gmsh.model.mesh.getElementQualities(
+                        tags.tolist(), "minDetJac"
+                    )
+                )
+
+                if len(sicn) != len(tags) or len(detjac) != len(tags):
+                    raise RuntimeError("Quality result count mismatch.")
+
+                low = int(np.sum(sicn < 0.1))
+                neg_sicn = int(np.sum(sicn < 0))
+                neg_det = int(np.sum(detjac < 0))
+
+                totals["total_elements"] += len(tags)
+                totals["low_quality"] += low
+                totals["negative_sicn"] += neg_sicn
+                totals["negative_detjac"] += neg_det
+
+                print(
+                    f"  Surface {surface}: {len(tags)} elements | "
+                    f"SICN < 0.1: {low} | "
+                    f"negative SICN: {neg_sicn} | "
+                    f"negative detJac: {neg_det}"
+                )
+
+                worst = np.argsort(sicn)[:3]
+
+                for idx in worst:
+                    print(
+                        f"    Element {int(tags[idx])}: "
+                        f"SICN={sicn[idx]:.5f}, "
+                        f"detJac={detjac[idx]:.6g}"
+                    )
+
+    print("\nStage summary:", totals)
+
+    return totals
 
 
-    # Check: Surface normal orientation for tapered tower
-    print("\n--- Surface Normal Check ---")
+# =========================================================
+# S6 GEOMETRY AND AREA
+# =========================================================
 
-    # Get the three corner nodes of every S6 triangular element
-    corner_nodes = nodes[elems[:, :3]]
+# Seven-point triangular quadrature.
+# Weights sum to 0.5, the reference triangle area.
 
-    # Calculate two edge vectors
-    v1 = corner_nodes[:, 1] - corner_nodes[:, 0]
-    v2 = corner_nodes[:, 2] - corner_nodes[:, 0]
+QUAD_POINTS = [
+    (1/3, 1/3, 0.1125),
+    (0.0597158717, 0.4701420641, 0.0661970764),
+    (0.4701420641, 0.0597158717, 0.0661970764),
+    (0.4701420641, 0.4701420641, 0.0661970764),
+    (0.7974269853, 0.1012865073, 0.0629695903),
+    (0.1012865073, 0.7974269853, 0.0629695903),
+    (0.1012865073, 0.1012865073, 0.0629695903),
+]
 
-    # Cross product gives the surface normal
-    normals = np.cross(v1, v2)
 
-    # Calculate element centroids
-    centroids = np.mean(corner_nodes, axis=1)
+def s6_shape_derivatives(r, s):
+    """Derivatives of six-node triangular shape functions."""
 
-    # Radial direction from the tower's central Z-axis
-    radial = centroids.copy()
-    radial[:, 2] = 0.0
+    L1 = 1.0 - r - s
+    L2 = r
+    L3 = s
 
-    # Dot product tells us whether normals point inward or outward
-    normal_direction = np.einsum("ij,ij->i", normals, radial)
+    dNdr = np.array([
+        -(4 * L1 - 1),
+        4 * L2 - 1,
+        0.0,
+        4 * (L1 - L2),
+        4 * L3,
+        -4 * L3
+    ])
 
-    outward_count = np.sum(normal_direction > 0)
-    inward_count = np.sum(normal_direction < 0)
-    zero_count = np.sum(np.isclose(normal_direction, 0.0))
+    dNds = np.array([
+        -(4 * L1 - 1),
+        0.0,
+        4 * L3 - 1,
+        -4 * L2,
+        4 * L2,
+        4 * (L1 - L3)
+    ])
 
-    print("Outward-facing elements:", outward_count)
-    print("Inward-facing elements:", inward_count)
-    print("Zero/uncertain orientation:", zero_count)    
-    # Check: Triangle element aspect ratio
-    print("\n--- Element Quality Check ---")
+    return dNdr, dNds
 
-    # Get the three corner nodes of each triangular element
-    corner_nodes = nodes[elems[:, :3]]
 
-    # Calculate the three edge lengths
-    edge_1 = np.linalg.norm(
-        corner_nodes[:, 1] - corner_nodes[:, 0], axis=1
+def s6_element_area(points):
+    """Integrate the curved S6 element surface area."""
+
+    area = 0.0
+
+    for r, s, weight in QUAD_POINTS:
+
+        dNdr, dNds = s6_shape_derivatives(r, s)
+
+        tangent_r = dNdr @ points
+        tangent_s = dNds @ points
+
+        jacobian = np.linalg.norm(
+            np.cross(tangent_r, tangent_s)
+        )
+
+        area += weight * jacobian
+
+    return area
+
+
+def calculate_s6_areas(nodes, elems):
+
+    areas = np.array([
+        s6_element_area(nodes[element])
+        for element in elems
+    ])
+
+    return areas
+
+
+def check_surface_area(nodes, elems, cad_area):
+
+    areas = calculate_s6_areas(nodes, elems)
+
+    mesh_area = areas.sum()
+
+    error = (
+        abs(mesh_area - cad_area)
+        / cad_area * 100
     )
 
-    edge_2 = np.linalg.norm(
-        corner_nodes[:, 2] - corner_nodes[:, 1], axis=1
-    )
+    print("\n--- S6 Surface Area Check ---")
+    print(f"CAD area:  {cad_area:.4f} m2")
+    print(f"Mesh area: {mesh_area:.4f} m2")
+    print(f"Area error: {error:.4f}%")
 
-    edge_3 = np.linalg.norm(
-        corner_nodes[:, 0] - corner_nodes[:, 2], axis=1
-    )
-
-    # Find the longest edge of each triangle
-    longest_edge = np.maximum.reduce([edge_1, edge_2, edge_3])
-
-    # Calculate triangle area using the cross product
-    v1 = corner_nodes[:, 1] - corner_nodes[:, 0]
-    v2 = corner_nodes[:, 2] - corner_nodes[:, 0]
-
-    areas = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1)
-
-    # Shortest altitude = 2 * Area / longest edge
-    shortest_altitude = 2.0 * areas / longest_edge
-
-    # Aspect ratio = longest edge / shortest altitude
-    aspect_ratios = longest_edge / shortest_altitude
-
-    print("Minimum aspect ratio:", np.min(aspect_ratios))
-    print("Maximum aspect ratio:", np.max(aspect_ratios))
-    print("Average aspect ratio:", np.mean(aspect_ratios))
-
-    # Count elements with high aspect ratios
-    poor_elements = np.sum(aspect_ratios > 5.0)
-
-    print("Elements with aspect ratio > 5:", poor_elements)
+    return mesh_area, error
 
 
-    # Check: Connectivity between adjacent tower sections
-    print("\n--- Tower Section Interface Check ---")
+# =========================================================
+# SURFACE NORMAL CHECK
+# =========================================================
 
-    interface_heights = [22.0, 44.0, 66.0]
-    group_names = ["Tower_1", "Tower_2", "Tower_3", "Tower_4"]
+def check_surface_normals(nodes, elems, groups, group_names):
+    """
+    Diagnose S6 shell element orientation.
 
-    for i, height in enumerate(interface_heights):
+    Checks:
+    1. Element normals against raw CAD normals.
+    2. Dominant CAD-normal relationship on each surface.
+    3. Shared-edge direction consistency between neighbouring
+       elements on the same CAD surface.
 
-        # Elements belonging to the lower section
-        lower_elements = elems[elem_group == i]
+    This function only diagnoses.
+    It does NOT modify element connectivity.
+    """
 
-        # Elements belonging to the upper section
-        upper_elements = elems[elem_group == i + 1]
+    print("\n" + "=" * 65)
+    print("DETAILED SHELL NORMAL DIAGNOSTIC")
+    print("=" * 65)
 
-        # Find all nodes used by each section
-        lower_nodes = np.unique(lower_elements)
-        upper_nodes = np.unique(upper_elements)
+    # Get Gmsh node tags and coordinates.
+    node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
+    node_coords = node_coords.reshape(-1, 3)
 
-        # Find nodes shared by both sections
-        shared_nodes = np.intersect1d(lower_nodes, upper_nodes)
+    coord_lookup = {
+        int(tag): node_coords[i]
+        for i, tag in enumerate(node_tags)
+    }
 
-        # Check that shared nodes lie at the expected interface
-        interface_nodes = shared_nodes[
-            np.isclose(nodes[shared_nodes, 2], height, atol=0.01)
+    total_elements = 0
+    total_cad_opposite = 0
+    total_neighbour_conflicts = 0
+    total_unverified = 0
+
+    for group_name, surfaces in groups.items():
+
+        print(f"\n{'-' * 65}")
+        print(f"GROUP: {group_name}")
+        print(f"{'-' * 65}")
+
+        group_elements = []
+
+        # -------------------------------------------------
+        # Collect elements and calculate their normals.
+        # -------------------------------------------------
+
+        for surface in surfaces:
+
+            types, element_tags, connectivity = (
+                gmsh.model.mesh.getElements(2, surface)
+            )
+
+            for element_type, tags, conn in zip(
+                types, element_tags, connectivity
+            ):
+
+                if element_type != 9:
+                    continue
+
+                conn = np.asarray(
+                    conn, dtype=int
+                ).reshape(-1, 6)
+
+                tags = np.asarray(tags, dtype=int)
+
+                for element_tag, row in zip(tags, conn):
+
+                    corner_tags = row[:3]
+
+                    p = np.array([
+                        coord_lookup[int(tag)]
+                        for tag in corner_tags
+                    ])
+
+                    v1 = p[1] - p[0]
+                    v2 = p[2] - p[0]
+
+                    normal = np.cross(v1, v2)
+                    norm = np.linalg.norm(normal)
+
+                    if norm < 1e-14:
+                        continue
+
+                    normal /= norm
+
+                    centroid = p.mean(axis=0)
+
+                    # -------------------------------------
+                    # Compare with CAD normal.
+                    # -------------------------------------
+
+                    cad_dot = None
+
+                    try:
+                        uv = gmsh.model.getParametrization(
+                            2,
+                            surface,
+                            centroid.tolist()
+                        )
+
+                        cad_normal = np.asarray(
+                            gmsh.model.getNormal(
+                                surface,
+                                uv
+                            ),
+                            dtype=float
+                        ).reshape(3, -1)[:, 0]
+
+                        cad_norm = np.linalg.norm(cad_normal)
+
+                        if cad_norm > 1e-14:
+                            cad_normal /= cad_norm
+
+                            cad_dot = float(
+                                np.dot(normal, cad_normal)
+                            )
+
+                    except Exception:
+                        cad_dot = None
+
+                    group_elements.append({
+                        "tag": int(element_tag),
+                        "surface": int(surface),
+                        "nodes": corner_tags.copy(),
+                        "normal": normal,
+                        "cad_dot": cad_dot
+                    })
+
+        # -------------------------------------------------
+        # Analyse each CAD surface independently.
+        # -------------------------------------------------
+
+        surface_signs = {}
+
+        for surface in surfaces:
+
+            records = [
+                item for item in group_elements
+                if item["surface"] == surface
+                and item["cad_dot"] is not None
+            ]
+
+            signs = [
+                1 if item["cad_dot"] >= 0 else -1
+                for item in records
+            ]
+
+            if not signs:
+                surface_signs[surface] = None
+                continue
+
+            positive = signs.count(1)
+            negative = signs.count(-1)
+
+            dominant_sign = (
+                1 if positive >= negative else -1
+            )
+
+            surface_signs[surface] = dominant_sign
+
+            print(
+                f"\nSurface {surface}: "
+                f"elements={len(records)}, "
+                f"raw CAD-aligned={positive}, "
+                f"raw CAD-opposite={negative}"
+            )
+
+            if dominant_sign == -1:
+                print(
+                    "  NOTE: Majority of mesh elements oppose "
+                    "the raw CAD normal on this surface."
+                )
+
+        # -------------------------------------------------
+        # Find elements that disagree with the dominant
+        # CAD relationship on their own surface.
+        # -------------------------------------------------
+
+        cad_anomalies = []
+
+        for item in group_elements:
+
+            dot = item["cad_dot"]
+
+            if dot is None:
+                continue
+
+            dominant_sign = surface_signs.get(
+                item["surface"]
+            )
+
+            if dominant_sign is None:
+                continue
+
+            actual_sign = 1 if dot >= 0 else -1
+
+            if actual_sign != dominant_sign:
+                cad_anomalies.append(item)
+
+        # -------------------------------------------------
+        # Check shared-edge direction consistency.
+        #
+        # For two consistently oriented triangles sharing
+        # an edge, the edge directions must be opposite.
+        # -------------------------------------------------
+
+        edge_map = defaultdict(list)
+
+        for index, item in enumerate(group_elements):
+
+            n = item["nodes"]
+
+            directed_edges = [
+                (int(n[0]), int(n[1])),
+                (int(n[1]), int(n[2])),
+                (int(n[2]), int(n[0]))
+            ]
+
+            for a, b in directed_edges:
+
+                key = tuple(sorted((a, b)))
+
+                edge_map[key].append({
+                    "index": index,
+                    "surface": item["surface"],
+                    "direction": (a, b)
+                })
+
+        orientation_conflicts = set()
+        checked_edges = 0
+
+        for edge, occurrences in edge_map.items():
+
+            if len(occurrences) != 2:
+                continue
+
+            first, second = occurrences
+
+            # Only compare elements on the same CAD surface.
+            if first["surface"] != second["surface"]:
+                continue
+
+            checked_edges += 1
+
+            if first["direction"] == second["direction"]:
+
+                orientation_conflicts.add(first["index"])
+                orientation_conflicts.add(second["index"])
+
+        orientation_conflict_records = [
+            group_elements[i]
+            for i in sorted(orientation_conflicts)
         ]
 
-        print(
-            f"{group_names[i]} - {group_names[i + 1]} "
-            f"at z = {height} m:"
+        # -------------------------------------------------
+        # Report group results.
+        # -------------------------------------------------
+
+        verified = sum(
+            item["cad_dot"] is not None
+            for item in group_elements
         )
-        print("  Shared nodes:", len(shared_nodes))
-        print("  Shared nodes at interface:", len(interface_nodes))
 
-        if len(interface_nodes) == 0:
-            print("  WARNING: No shared interface nodes detected!")
+        raw_opposite = sum(
+            item["cad_dot"] is not None
+            and item["cad_dot"] < 0
+            for item in group_elements
+        )
+
+        print("\nGroup summary:")
+        print("  Total elements:", len(group_elements))
+        print("  CAD comparisons successful:", verified)
+        print("  Opposite to raw CAD normal:", raw_opposite)
+        print(
+            "  CAD-sign anomalies within their surface:",
+            len(cad_anomalies)
+        )
+        print("  Shared edges checked:", checked_edges)
+        print(
+            "  Elements with inconsistent edge orientation:",
+            len(orientation_conflict_records)
+        )
+
+        if cad_anomalies:
+            print("\n  CAD-sign anomaly element IDs:")
+            print([
+                item["tag"]
+                for item in cad_anomalies[:50]
+            ])
+
+        if orientation_conflict_records:
+            print("\n  Orientation-conflict element IDs:")
+            print([
+                item["tag"]
+                for item in orientation_conflict_records[:50]
+            ])
+
+        # -------------------------------------------------
+        # Update overall counters.
+        # -------------------------------------------------
+
+        total_elements += len(group_elements)
+        total_cad_opposite += raw_opposite
+
+        total_neighbour_conflicts += len(
+            orientation_conflict_records
+        )
+
+        total_unverified += (
+            len(group_elements) - verified
+        )
+
+    # -----------------------------------------------------
+    # Final summary.
+    # -----------------------------------------------------
+
+    print("\n" + "=" * 65)
+    print("OVERALL NORMAL DIAGNOSTIC SUMMARY")
+    print("=" * 65)
+
+    print("Total elements:", total_elements)
+    print("Opposite to raw CAD normals:", total_cad_opposite)
+
+    print(
+        "Elements with inconsistent edge orientation:",
+        total_neighbour_conflicts
+    )
+
+    print("Unverified CAD comparisons:", total_unverified)
+
+    print("\nNo element connectivity was modified.")
+
+
+# =========================================================
+# S6 EDGE CONSISTENCY
+# =========================================================
+
+def check_s6_edges(elems):
+
+    print("\n--- S6 Shared-Edge Consistency ---")
+
+    # Each S6 edge has two corner nodes and one midside node.
+    edge_definitions = [
+        (0, 1, 3),
+        (1, 2, 4),
+        (2, 0, 5)
+    ]
+
+    edge_occurrences = defaultdict(list)
+
+    for element_index, element in enumerate(elems):
+
+        for a, b, mid in edge_definitions:
+
+            na = int(element[a])
+            nb = int(element[b])
+            nm = int(element[mid])
+
+            key = tuple(sorted((na, nb)))
+
+            direction = (na, nb)
+
+            edge_occurrences[key].append(
+                (nm, direction, element_index)
+            )
+
+    boundary = 0
+    internal = 0
+    non_manifold = 0
+    mismatch = 0
+    same_direction = 0
+
+    for key, occurrences in edge_occurrences.items():
+
+        if len(occurrences) == 1:
+            boundary += 1
+
+        elif len(occurrences) == 2:
+            internal += 1
+
+            mid_nodes = {
+                item[0] for item in occurrences
+            }
+
+            if len(mid_nodes) != 1:
+                mismatch += 1
+
+            d1 = occurrences[0][1]
+            d2 = occurrences[1][1]
+
+            if d1 == d2:
+                same_direction += 1
+
         else:
-            print("  Interface connectivity check passed!")
-            
-                
-    # Correct orientation for the Z-axis test cylinder
-    if orientation == "cylinder_z":
-        elems = fix_inward_elements(nodes, elems)
-        print("\n--- Verification After Correction ---")
-        normal_check(nodes, elems)
+            non_manifold += 1
 
-    # Check 4: Surface area verification
-    p1 = nodes[elems[:, 0]]
-    p2 = nodes[elems[:, 1]]
-    p3 = nodes[elems[:, 2]]
+    print("Boundary S6 edges:", boundary)
+    print("Shared S6 edges:", internal)
+    print("Non-manifold edges:", non_manifold)
+    print("Midside-node mismatches:", mismatch)
+    print("Same-direction shared edges:", same_direction)
 
-    a = p2 - p1
-    b = p3 - p1
+    return {
+        "boundary": boundary,
+        "internal": internal,
+        "non_manifold": non_manifold,
+        "mismatch": mismatch,
+        "same_direction": same_direction
+    }
 
-    cross = np.cross(a, b)
 
-    triangle_areas = 0.5 * np.linalg.norm(cross, axis=1)
+# =========================================================
+# CONNECTIVITY AND DUPLICATES
+# =========================================================
 
-    mesh_area = np.sum(triangle_areas)
+def check_connectivity(elems, n_nodes):
 
-    theoretical_area = total_area
+    invalid = np.sum(
+        (elems < 0) | (elems >= n_nodes)
+    )
 
-    error_percent = abs(mesh_area - theoretical_area) / theoretical_area * 100
+    print("Invalid node references:", invalid)
 
-    print(f"Theoretical surface area: {theoretical_area:.4f} m^2")
-    print(f"Mesh surface area: {mesh_area:.4f} m^2")
-    print(f"Area error: {error_percent:.4f}%")
+    if invalid:
+        raise ValueError("Invalid node references detected.")
 
-    mesh = Mesh(nodes=nodes, elems=elems, elem_group=elem_group,
-                group_names=group_names)
 
-    # Check 6: Free-edge verification
+def check_duplicates(elems):
 
-    edge_list = np.vstack([
+    unique = np.unique(
+        np.sort(elems, axis=1),
+        axis=0
+    )
+
+    duplicates = len(elems) - len(unique)
+
+    print("Duplicate elements:", duplicates)
+
+    if duplicates:
+        raise ValueError("Duplicate elements detected.")
+
+
+def count_components(elems, n_nodes):
+    """Count connected components using corner nodes."""
+
+    parent = np.arange(n_nodes)
+
+    def find(x):
+
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+
+        return x
+
+    def union(a, b):
+
+        ra = find(a)
+        rb = find(b)
+
+        if ra != rb:
+            parent[rb] = ra
+
+    for e in elems:
+
+        for node in e[1:3]:
+            union(int(e[0]), int(node))
+
+    roots = {
+        find(int(node))
+        for node in np.unique(elems[:, :3])
+    }
+
+    return len(roots)
+
+
+# =========================================================
+# ASPECT RATIO
+# =========================================================
+
+def check_quality(nodes, elems):
+
+    p = nodes[elems[:, :3]]
+
+    e1 = np.linalg.norm(
+        p[:, 1] - p[:, 0], axis=1
+    )
+
+    e2 = np.linalg.norm(
+        p[:, 2] - p[:, 1], axis=1
+    )
+
+    e3 = np.linalg.norm(
+        p[:, 0] - p[:, 2], axis=1
+    )
+
+    longest = np.maximum.reduce([e1, e2, e3])
+
+    area = 0.5 * np.linalg.norm(
+        np.cross(
+            p[:, 1] - p[:, 0],
+            p[:, 2] - p[:, 0]
+        ),
+        axis=1
+    )
+
+    altitude = (
+        2.0 * area /
+        np.maximum(longest, 1e-15)
+    )
+
+    aspect = (
+        longest /
+        np.maximum(altitude, 1e-15)
+    )
+
+    print("\n--- Corner-node Aspect Ratio ---")
+    print("Minimum:", aspect.min())
+    print("Maximum:", aspect.max())
+    print("Average:", aspect.mean())
+    print("> 5:", np.sum(aspect > 5))
+
+    return aspect
+
+
+# =========================================================
+# FREE EDGE CHECK
+# =========================================================
+
+def free_edges(elems):
+
+    edges = np.vstack([
         elems[:, [0, 1]],
         elems[:, [1, 2]],
         elems[:, [2, 0]]
     ])
 
-    # Sort each edge so (10, 20) and (20, 10) are identical
-    edge_list = np.sort(edge_list, axis=1)
+    edges = np.sort(edges, axis=1)
 
-    # Count how many elements share each unique edge
-    unique_edges, edge_counts = np.unique(
-        edge_list, axis=0, return_counts=True
+    unique, counts = np.unique(
+        edges,
+        axis=0,
+        return_counts=True
     )
 
-    # Edges belonging to only one element are free edges
-    free_edges = unique_edges[edge_counts == 1]
-
-    print("Total unique edges:", len(unique_edges))
-    print("Free edges:", len(free_edges))
-    print("Internal edges:", np.sum(edge_counts == 2))
-    print("Unexpected edges:", np.sum(edge_counts > 2))
-        # Check location of free edges
-
-    free_edge_nodes = nodes[free_edges]
-
-    edge_z_min = free_edge_nodes[:, :, 2].min(axis=1)
-    edge_z_max = free_edge_nodes[:, :, 2].max(axis=1)
-
-    bottom_edges = np.all(free_edge_nodes[:, :, 2] < tol, axis=1)
-
-    top_edges = np.all(
-        free_edge_nodes[:, :, 2] > nodes[:, 2].max() - tol, axis=1
+    return (
+        unique[counts == 1],
+        unique[counts == 2],
+        unique[counts > 2]
     )
 
-    middle_edges = ~(bottom_edges | top_edges)
 
-    print("Bottom free edges:", np.sum(bottom_edges))
-    print("Top free edges:", np.sum(top_edges))
-    print("Middle free edges:", np.sum(middle_edges))
+# =========================================================
+# THICKNESS CHECK
+# =========================================================
 
-    mesh.node_sets["base"] = np.where(nodes[:, 2] < nodes[:, 2].min() + tol)[0]
-    print(f"Nodes: {mesh.n_nodes}, elements: {mesh.n_elems}, "
-          f"base nodes: {len(mesh.node_sets['base'])}")
-    
-    # Check 3: Base ring completeness
-    base_nodes = nodes[mesh.node_sets["base"]]
+def check_thickness(groups, thickness):
 
-    angles = np.arctan2(base_nodes[:, 1], base_nodes[:, 0])
-    angles = np.sort(angles)
+    print("\n--- Shell Thickness Check ---")
 
-    gaps = np.diff(np.append(angles, angles[0] + 2*np.pi))
+    if thickness is None:
+        print(
+            "Thickness data not supplied to build_mesh()."
+        )
+        return
 
-    print("Largest angular gap (degrees):", np.degrees(gaps.max()))
+    missing = []
+
+    for name in groups:
+
+        if name not in thickness:
+            missing.append(name)
+            print(f"{name}: MISSING")
+        else:
+            value = thickness[name]
+
+            print(f"{name}: {value} m")
+
+            if not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"Invalid thickness for {name}: {value}"
+                )
+
+            if value <= 0:
+                raise ValueError(
+                    f"Non-positive thickness for {name}"
+                )
+
+    if missing:
+        print("Groups missing thickness:", missing)
+    else:
+        print("All groups have thickness values.")
+
+    print(
+        "Note: This verifies supplied thickness data. "
+        "It does not verify CalculiX section assignment."
+    )
+
+
+# =========================================================
+# GEOMETRY DIAGNOSTICS
+# =========================================================
+
+def diagnose_surfaces(groups):
+
+    print("\n--- Surface Diagnostics ---")
+
+    for name, surfaces in groups.items():
+
+        print(f"\n{name}:")
+
+        for surface in surfaces:
+
+            surface_type = gmsh.model.getType(2, surface)
+
+            area = gmsh.model.occ.getMass(2, surface)
+
+            bbox = gmsh.model.getBoundingBox(2, surface)
+
+            print(
+                f"  Surface {surface}: "
+                f"type={surface_type}, "
+                f"area={area:.4f} m2, "
+                f"bbox={bbox}"
+            )
+
+
+# =========================================================
+# COMPLETE MESH GENERATION
+# =========================================================
+
+def build_mesh(
+    groups,
+    base_curves=None,
+    total_area=None,
+    h=1.0,
+    h_base=0.5,
+    d_refine=6.0,
+    order=2,
+    tol=0.01,
+    orientation=None,
+    create_groups=True,
+    thickness=None
+):
+    """Generate and validate the complete turbine S6 mesh."""
+
+    if order != 2:
+        raise ValueError("This project uses S6 elements.")
+
+    tower_groups = get_tower_groups(groups)
+
+    if not tower_groups:
+        raise ValueError("No tower groups found.")
+
+    base_curves = find_base_curves(tower_groups)
+
+    total_area = calculate_total_area(groups)
+
+    print("\n--- Geometry Summary ---")
+
+    for name, surfaces in groups.items():
+
+        area = sum(
+            gmsh.model.occ.getMass(2, s)
+            for s in surfaces
+        )
+
+        print(
+            f"{name}: {len(surfaces)} surfaces, "
+            f"area={area:.3f} m2"
+        )
+
+    print("\nTotal CAD area:", total_area, "m2")
+
+    estimated = estimate_elements(total_area, h)
+
+    print("Estimated elements:", estimated)
+
+    if estimated > MAX_ELEMS_WARN:
+        print("WARNING: Large mesh expected.")
+
+    diagnose_surfaces(groups)
+
+    if create_groups:
+        create_physical_groups(groups)
+
+    # Mesh settings.
+    gmsh.option.setNumber(
+        "Mesh.MeshSizeExtendFromBoundary", 1
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.MeshSizeFromPoints", 1
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.MeshSizeFromCurvature", 0
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.MeshSizeMin", 0.05
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.MeshSizeMax", h
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.Algorithm", 6
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.RandomFactor", 1e-9
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.ElementOrder", 1
+    )
+
+    gmsh.option.setNumber(
+        "Mesh.SecondOrderLinear", 1
+    )
+
+    set_tower_base_refinement(
+        base_curves,
+        h=h,
+        h_base=h_base,
+        d_refine=d_refine
+    )
+
+    apply_group_sizes(groups)
+
+    print("\nGenerating complete turbine mesh...")
+
+    gmsh.model.mesh.generate(2)
+
+    # T3 quality before conversion.
+    t3_results = diagnose_element_quality(
+        groups,
+        "Original T3 mesh",
+        expected_type=2
+    )
+
+    # Convert to S6.
+    print("\nConverting T3 to S6...")
+
+    gmsh.model.mesh.setOrder(2)
+
+    s6_results = diagnose_element_quality(
+        groups,
+        "Final S6 mesh",
+        expected_type=9
+    )
+
+    print("\n--- T3 vs S6 Comparison ---")
+
+    for key in (
+        "total_elements",
+        "low_quality",
+        "negative_sicn",
+        "negative_detjac"
+    ):
+        print(
+            f"{key}: T3={t3_results[key]}, "
+            f"S6={s6_results[key]}"
+        )
+
+    # Extract mesh.
+    nodes, elems, elem_group, group_names = extract_mesh(
+        groups, order=order
+    )
+
+    # 1. Surface normal direction.
+    check_surface_normals(
+        nodes, elems, groups, group_names
+    )
+
+    # 2. S6 shared-edge consistency.
+    edge_results = check_s6_edges(elems)
+
+    # Connectivity.
+    print("\n--- Node Reference Check ---")
+
+    check_connectivity(elems, len(nodes))
+
+    # Duplicate elements.
+    print("\n--- Duplicate Element Check ---")
+
+    check_duplicates(elems)
+
+    # 3. Accurate S6 surface area.
+    check_surface_area(
+        nodes, elems, total_area
+    )
+
+    # 4. Element quality and aspect ratio.
+    check_quality(nodes, elems)
+
+    # 5. Free-edge and component checks.
+    print("\n--- Free Edge Check ---")
+
+    free, internal, unexpected = free_edges(elems)
+
+    print("Free edges:", len(free))
+    print("Internal edges:", len(internal))
+    print("Unexpected edges:", len(unexpected))
+
+    components = count_components(
+        elems, len(nodes)
+    )
+
+    print("Connected components:", components)
+
+    # 6. Thickness check.
+    check_thickness(groups, thickness)
+
+    # Base node set.
+    z_min = nodes[:, 2].min()
+
+    base_nodes = np.where(
+        np.abs(nodes[:, 2] - z_min) < tol
+    )[0]
+
+    if len(base_nodes) == 0:
+        raise ValueError("Tower base nodes not found.")
+
+    mesh = Mesh(
+        nodes=nodes,
+        elems=elems,
+        elem_group=elem_group,
+        group_names=group_names
+    )
+
+    mesh.node_sets["base"] = base_nodes
+
+    print("\n" + "=" * 55)
+    print("FINAL MESH SUMMARY")
+    print("=" * 55)
+
+    print("Groups:", group_names)
+    print("Nodes:", mesh.n_nodes)
+    print("Elements:", mesh.n_elems)
+    print("Z range:", nodes[:, 2].min(), "to", nodes[:, 2].max())
+    print("Base nodes:", len(base_nodes))
+
+    print("\nValidation report completed.")
+
     return mesh
 
 
+# =========================================================
+# MAIN
+# =========================================================
+
 if __name__ == "__main__":
+
+    from geometry.default_generator import (
+        load_params,
+        build_default
+    )
+
     gmsh.initialize()
-    gmsh.model.add("cyl")
-    groups, base_curves, area = make_cylinder(2.0, 20.0)
-    m = build_mesh(groups, base_curves, area, h=0.25, order=2,orientation="cylinder_z")
 
+    try:
 
-    # inward = normal_check(m.nodes, m.elems)
+        gmsh.model.add("wind_turbine")
 
-        # Verify Gmsh S6 reference-node ordering
-        # Verify Gmsh S6 reference-node ordering
-    properties = gmsh.model.mesh.getElementProperties(9)
+        params = load_params(
+            "data/default_turbine.json"
+        )
 
-    name, dim, order, num_nodes, local_coords, num_primary = properties
+        groups, thickness = build_default(params)
 
-    print("\nElement name:", name)
-    print("Dimension:", dim)
-    print("Polynomial order:", order)
-    print("Number of nodes:", num_nodes)
-    print("Primary nodes:", num_primary)
-    print("Length of local coordinates:", len(local_coords))
+        mesh = build_mesh(
+            groups,
+            h=1.0,
+            h_base=0.5,
+            d_refine=6.0,
+            order=2,
+            thickness=thickness
+        )
 
-    local_coords = np.array(local_coords).reshape(-1, 2)
+        gmsh.write("turbine_mesh.msh")
 
-    print("\nReference node coordinates:")
+        print("\nSaved turbine_mesh.msh")
 
-    for i, coord in enumerate(local_coords):
-        print(f"Node {i + 1}: {coord}")
+        gmsh.fltk.run()
 
-    print("Element nodes per element:", m.elems.shape[1])
-    print("First S6 element node indices:", m.elems[0])
-    gmsh.fltk.run()
-    gmsh.finalize()
+    finally:
+        gmsh.finalize()

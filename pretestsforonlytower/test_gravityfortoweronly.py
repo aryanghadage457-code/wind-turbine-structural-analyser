@@ -42,6 +42,34 @@ try:
         props=props,
         s=settings
     )
+    # 6. Calculate theoretical weight using the actual mesh
+    import numpy as np
+
+    total_volume = 0.0
+
+    for e, element in enumerate(mesh.elems):
+
+        p = mesh.nodes[element]
+
+        # Calculate triangular element area
+        area = 0.5 * np.linalg.norm(
+            np.cross(p[1] - p[0], p[2] - p[0])
+        )
+
+        group_index = mesh.elem_group[e]
+        group_name = mesh.group_names[group_index]
+
+        thickness = props[group_name]
+
+        total_volume += area * thickness
+
+    theoretical_mass = settings.rho * total_volume
+    theoretical_weight = theoretical_mass * 9.81
+
+    print("\n--- Mesh-based weight check ---")
+    print(f"Shell volume: {total_volume:.4f} m^3")
+    print(f"Mass: {theoretical_mass:.2f} kg")
+    print(f"Weight: {theoretical_weight:.2f} N")
 
     print("\nCalculiX input file generated successfully!")
     print("File: tower_gravity.inp")

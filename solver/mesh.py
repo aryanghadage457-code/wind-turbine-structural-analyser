@@ -1,4 +1,4 @@
-
+from solver.bcs import preflight
 import numpy as np
 import gmsh
 
@@ -1276,15 +1276,15 @@ def build_mesh(
     # 6. Thickness check.
     check_thickness(groups, thickness)
 
-    # Base node set.
-    z_min = nodes[:, 2].min()
+    # # Base node set.
+    # z_min = nodes[:, 2].min()
 
-    base_nodes = np.where(
-        np.abs(nodes[:, 2] - z_min) < tol
-    )[0]
+    # base_nodes = np.where(
+    #     np.abs(nodes[:, 2] - z_min) < tol
+    # )[0]
 
-    if len(base_nodes) == 0:
-        raise ValueError("Tower base nodes not found.")
+    # if len(base_nodes) == 0:
+    #     raise ValueError("Tower base nodes not found.")
 
     mesh = Mesh(
         nodes=nodes,
@@ -1293,7 +1293,7 @@ def build_mesh(
         group_names=group_names
     )
 
-    mesh.node_sets["base"] = base_nodes
+    # mesh.node_sets["base"] = base_nodes
 
     print("\n" + "=" * 55)
     print("FINAL MESH SUMMARY")
@@ -1303,7 +1303,7 @@ def build_mesh(
     print("Nodes:", mesh.n_nodes)
     print("Elements:", mesh.n_elems)
     print("Z range:", nodes[:, 2].min(), "to", nodes[:, 2].max())
-    print("Base nodes:", len(base_nodes))
+    # print("Base nodes:", len(base_nodes))
 
     print("\nValidation report completed.")
 
@@ -1341,6 +1341,18 @@ if __name__ == "__main__":
             order=2,
             thickness=thickness
         )
+        print("\n" + "=" * 60)
+        print("BOUNDARY CONDITION PREFLIGHT")
+        print("=" * 60)
+
+        report = preflight(
+            mesh,
+            strict=False,
+            allow_open_top=False
+        )
+
+        print(report)
+        
 
         gmsh.write("turbine_mesh.msh")
 

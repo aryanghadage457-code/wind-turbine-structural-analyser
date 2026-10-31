@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QTableWidget,
@@ -11,7 +13,6 @@ from PySide6.QtCore import Qt, Signal
 class StartPage(QWidget):
 
     new_project_requested = Signal()
-    import_step_requested = Signal()
     open_project_requested = Signal(str)
 
     def __init__(self):
@@ -259,16 +260,19 @@ class StartPage(QWidget):
         layout.setContentsMargins(40, 35, 40, 35)
         layout.setSpacing(22)
 
+    # Page Header
         layout.addLayout(
-            self.create_header(
-                "Projects",
-                "Create a new analysis project or continue working on an existing one."
+        self.create_header(
+            "Projects",
+            "Create a new analysis project or continue working on an existing one."
             )
         )
 
-        # Action cards
+    # =====================================
+    # NEW PROJECT CARD
+    # =====================================
 
-        cards = QGridLayout()
+        cards = QHBoxLayout()
         cards.setSpacing(18)
 
         new_card = self.create_action_card(
@@ -278,27 +282,20 @@ class StartPage(QWidget):
             "Create New Project"
         )
 
-        import_card = self.create_action_card(
-            "⇧",
-            "IMPORT STEP MODEL",
-            "Import an existing 3D CAD model for structural analysis.",
-            "Browse STEP Files"
-        )
+        new_card.setMaximumWidth(420)
 
         new_card.button.clicked.connect(
             self.new_project_requested.emit
         )
 
-        import_card.button.clicked.connect(
-            self.import_step_requested.emit
-        )
-
-        cards.addWidget(new_card, 0, 0)
-        cards.addWidget(import_card, 0, 1)
+        cards.addWidget(new_card)
+        cards.addStretch()
 
         layout.addLayout(cards)
 
-        # Recent projects
+    # =====================================
+    # RECENT PROJECTS
+    # =====================================
 
         recent_title = QLabel("Recent Projects")
         recent_title.setObjectName("SectionTitle")
@@ -342,7 +339,6 @@ class StartPage(QWidget):
         layout.addStretch()
 
         return page
-
     # =====================================
     # ACTION CARD
     # =====================================
@@ -417,7 +413,7 @@ class StartPage(QWidget):
 
         return page
 
-    # =====================================
+     # =====================================
     # RECENT PROJECTS
     # =====================================
 
@@ -436,3 +432,60 @@ class StartPage(QWidget):
         self.project_table.setItem(
             0, 2, QTableWidgetItem("-")
         )
+
+
+    def update_recent_projects(self, projects):
+
+        # Clear existing rows
+        self.project_table.setRowCount(0)
+
+        # Display message if no projects exist
+        if not projects:
+            self.show_empty_projects()
+            return
+
+        # Add each project to the table
+        for project in projects:
+
+            row = self.project_table.rowCount()
+
+            self.project_table.insertRow(row)
+
+            # Project name
+            name_item = QTableWidgetItem(
+                project["project_name"]
+            )
+
+            self.project_table.setItem(row, 0, name_item)
+
+            # Last opened date
+            last_opened = project.get("last_opened", "")
+
+            try:
+                date = datetime.fromisoformat(last_opened)
+                formatted_date = date.strftime("%d-%m-%Y %H:%M")
+
+            except (ValueError, TypeError):
+                formatted_date = "-"
+
+            date_item = QTableWidgetItem(formatted_date)
+
+            self.project_table.setItem(row, 1, date_item)
+
+            # Open button
+            open_button = QPushButton("Open")
+            open_button.setObjectName("PrimaryButton")
+            open_button.setCursor(Qt.PointingHandCursor)
+
+            project_path = project["project_path"]
+
+            open_button.clicked.connect(
+                lambda checked=False, path=project_path:
+                self.open_project_requested.emit(path)
+            )
+
+            self.project_table.setCellWidget(
+                row, 2, open_button
+            )
+
+        self.project_table.resizeRowsToContents()

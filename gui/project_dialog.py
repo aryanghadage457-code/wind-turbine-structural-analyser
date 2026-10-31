@@ -1,8 +1,8 @@
-import os
 import json
-
 from datetime import datetime
+from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -14,8 +14,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QFormLayout
 )
-
-from PySide6.QtCore import Qt
 
 
 class ProjectDialog(QDialog):
@@ -58,9 +56,19 @@ class ProjectDialog(QDialog):
             QPushButton:hover {
                 background-color: #0078D4;
             }
+
+            QPushButton#PrimaryButton {
+                background-color: #0078D4;
+                border: none;
+            }
+
+            QPushButton#PrimaryButton:hover {
+                background-color: #0063B1;
+            }
         """)
 
         self.create_interface()
+
 
     def create_interface(self):
 
@@ -76,9 +84,7 @@ class ProjectDialog(QDialog):
             "Enter your project details and choose a save location."
         )
 
-        description.setStyleSheet(
-            "color: #A5ABB4;"
-        )
+        description.setStyleSheet("color: #A5ABB4;")
 
         main_layout.addWidget(title)
         main_layout.addWidget(description)
@@ -87,30 +93,25 @@ class ProjectDialog(QDialog):
 
         form = QFormLayout()
 
+        # Project name
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText(
-            "Enter project name"
-        )
+        self.name_input.setPlaceholderText("Enter project name")
 
         form.addRow("Project Name:", self.name_input)
 
+        # Project location
         location_layout = QHBoxLayout()
 
         self.location_input = QLineEdit()
         self.location_input.setPlaceholderText(
-    "Select a folder using Browse..."
-)
+            "Select a folder using Browse..."
+        )
 
-# Prevent manual typing
         self.location_input.setReadOnly(True)
-
-                    # Show selected folder path
         self.location_input.setCursor(Qt.PointingHandCursor)
 
         browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(
-            self.browse_location
-        )
+        browse_button.clicked.connect(self.browse_location)
 
         location_layout.addWidget(self.location_input)
         location_layout.addWidget(browse_button)
@@ -121,6 +122,7 @@ class ProjectDialog(QDialog):
 
         main_layout.addStretch()
 
+        # Buttons
         buttons = QHBoxLayout()
 
         cancel_button = QPushButton("Cancel")
@@ -128,15 +130,14 @@ class ProjectDialog(QDialog):
 
         create_button = QPushButton("Create Project")
         create_button.setObjectName("PrimaryButton")
-        create_button.clicked.connect(
-            self.create_project
-        )
+        create_button.clicked.connect(self.create_project)
 
         buttons.addStretch()
         buttons.addWidget(cancel_button)
         buttons.addWidget(create_button)
 
         main_layout.addLayout(buttons)
+
 
     def browse_location(self):
 
@@ -148,26 +149,39 @@ class ProjectDialog(QDialog):
         if folder:
             self.location_input.setText(folder)
 
+
     def create_project(self):
 
         project_name = self.name_input.text().strip()
-        location = self.location_input.text().strip()
+        project_location = self.location_input.text().strip()
 
-        if not project_name or not location:
+        # Validate project name
+        if not project_name:
 
             QMessageBox.warning(
                 self,
-                "Missing Information",
-                "Please enter both project name and location."
+                "Missing Project Name",
+                "Please enter a project name."
             )
 
             return
 
-        # Validate project name
+        # Validate project location
+        if not project_location:
+
+            QMessageBox.warning(
+                self,
+                "Missing Location",
+                "Please select a project location."
+            )
+
+            return
+
+        # Validate project name as a folder name
         if (
             project_name in (".", "..")
+            or Path(project_name).name != project_name
             or any(char in project_name for char in '<>:"/\\|?*')
-            or project_name.endswith((" ", "."))
         ):
 
             QMessageBox.warning(
@@ -178,86 +192,32 @@ class ProjectDialog(QDialog):
 
             return
 
-        if not os.path.isdir(location):
+        project_path = Path(project_location) / project_name
 
-            QMessageBox.warning(
-                self,
-                "Invalid Location",
-                "Please select an existing folder."
-            )
-
-            return
-
-        project_path = os.path.join(
-            location,
-            project_name
-        )
-
-        if os.path.exists(project_path):
+        # Prevent overwriting an existing project
+        if project_path.exists():
 
             QMessageBox.warning(
                 self,
                 "Project Already Exists",
-                "A folder with this project name already exists."
+                "A folder with this project name already exists. "
+                "Please choose another name."
             )
 
             return
 
-        try:
+        # Store project information in memory only.
+        # No folder or file is created at this stage.
+        self.project_data = {
 
-            os.makedirs(project_path)
+            "project_name": project_name,
 
-            folders = [
-                "geometry",
-                "mesh",
-                "results",
-                "reports",
-                "config"
-            ]
+            "project_path": str(project_path.resolve()),
 
-            for folder in folders:
-
-                os.makedirs(
-                    os.path.join(project_path, folder)
-                )
-
-            metadata = {
-                "project_name": project_name,
-                "project_path": project_path,
-                "created_on": datetime.now().isoformat(
-                    timespec="seconds"
-                ),
-                "application": "Wind Turbine Structural Analyser",
-                "version": "1.0"
-            }
-
-            with open(
-                os.path.join(project_path, "project.json"),
-                "w",
-                encoding="utf-8"
-            ) as file:
-
-                json.dump(
-                    metadata,
-                    file,
-                    indent=4
-                )
-
-            self.project_data = metadata
-
-            QMessageBox.information(
-                self,
-                "Project Created",
-                f"Project created successfully!\n\n"
-                f"Location:\n{project_path}"
+            "created_on": datetime.now().isoformat(
+                timespec="seconds"
             )
 
-            self.accept()
+        }
 
-        except OSError as error:
-
-            QMessageBox.critical(
-                self,
-                "Project Creation Failed",
-                str(error)
-            )
+        self.accept()

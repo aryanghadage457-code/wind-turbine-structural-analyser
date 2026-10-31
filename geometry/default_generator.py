@@ -151,6 +151,16 @@ def build_default(params):
     if discard:
         occ.remove(discard, recursive=False)
         occ.synchronize()
+
+    # ---- yaw: turn the nacelle, hub and blades about the tower axis (Z through
+    # the origin). The tower is round, so turning the WHOLE model is the same as
+    # turning only the head, and every shared edge stays shared.
+    # Positive yaw = counter-clockwise seen from above (right-hand rule about +Z).
+    yaw = float(params.get("yaw_deg", 0.0))
+    if has_head and abs(yaw) > 1e-9:
+        occ.rotate(gmsh.model.getEntities(), 0, 0, 0, 0, 0, 1, math.radians(yaw))
+        occ.synchronize()
+
     for name, tags in groups.items():
         gmsh.model.addPhysicalGroup(2, tags, name=name)
     return groups, thickness

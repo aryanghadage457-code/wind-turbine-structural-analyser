@@ -8,7 +8,7 @@
       {"z0": 66.0, "z1": 87.6, "d0": 4.396, "d1": 3.870, "t": 0.020}
     ]
   },
-  "nacelle": {"y_rear": -10.0, "y_front": 4.0, "width": 4.0, "height": 4.8, "t": 0.02},
+  "nacelle": {"y_rear": -10.0, "y_front": 4.0, "width": 5.2, "height": 4.8, "t": 0.02},
   "hub": {"diameter": 3.0, "overhang": 5.0, "t": 0.03},
   "blade": {
     "_note": "PLACEHOLDER stations (approx NREL 5-MW). r = distance from hub centre. Verify chord/twist in NREL/TP-500-38060.",

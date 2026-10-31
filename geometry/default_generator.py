@@ -92,6 +92,11 @@ def build_default(params):
     az0 = params["blade"].get("azimuth_deg", 0.0) if has_blade else 0.0
     root_r = params["blade"]["stations"][0]["chord"] / 2 if has_blade else 0.0
 
+    # tower-top circle: used to find the disc that fragment() creates inside
+    # the nacelle floor (open tower top)
+    r_top = sections[-1]["d1"] / 2
+    disc_area = math.pi * r_top ** 2
+
     def in_nacelle_box(x, y, z, eps=1e-6):
         return (abs(x) <= nac["width"] / 2 + eps and
                 nac["y_rear"] - eps <= y <= nac["y_front"] + eps and
@@ -119,7 +124,17 @@ def build_default(params):
                 discard.append((2, s))        # inside nacelle or inside a blade root
         elif typ == "Plane" and in_nacelle_box(cx, cy, cz):
             on_front = abs(cy - nac["y_front"]) < 1e-6 and abs(ymax - ymin) < 1e-6
-            if on_front and (xmax - xmin) < nac["width"] * 0.99:
+            # open tower top: planar disc inside the tower-top circle,
+            # lying in the nacelle floor plane (found by position and size,
+            # not by surface ID)
+            on_floor_disc = (abs(zmax - zmin) < 1e-6
+                             and abs(cz - z_top) < 1e-6
+                             and math.hypot(cx, cy) < 1e-4
+                             and abs((xmax - xmin) - 2 * r_top) < 1e-3
+                             and abs(occ.getMass(2, s) - disc_area) < 1e-3 * disc_area)
+            if on_floor_disc:
+                discard.append((2, s))        # disc inside tower-top circle
+            elif on_front and (xmax - xmin) < nac["width"] * 0.99:
                 discard.append((2, s))        # front-face disk inside the hub
             else:
                 groups.setdefault("Nacelle", []).append(s)

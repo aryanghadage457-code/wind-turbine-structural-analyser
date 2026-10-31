@@ -8,10 +8,14 @@ QWidget {
     font-family: "Segoe UI";
     font-size: 10pt;
 }
+QLabel {
+    background-color: transparent;
+    border: none;
+}
 QPushButton {
     background-color: #343941;
     color: white;
-    border: 1px solid #414751;
+    border: 1px solid #414751;  
     border-radius: 5px;
     padding: 8px 14px;
 }

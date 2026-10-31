@@ -1,3 +1,4 @@
+from gui.project_dialog import ProjectDialog
 from gui.theme.styles import APP_STYLESHEET 
 import sys
 
@@ -40,8 +41,18 @@ class Application(QMainWindow):
 
     def create_project(self):
 
-        # Temporary navigation for now.
-        # We will create the actual project dialog next.
+     dialog = ProjectDialog(self)
+
+     if dialog.exec():
+
+        self.current_project = dialog.project_data
+
+        QMessageBox.information(
+            self,
+            "Project Ready",
+            f"Opening project: "
+            f"{self.current_project['project_name']}"
+        )
 
         self.open_workspace()
 

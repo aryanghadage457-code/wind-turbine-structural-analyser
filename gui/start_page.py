@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox,
-    QScrollArea
+    QStackedWidget
 )
 
 from PySide6.QtCore import Qt, Signal
@@ -19,130 +19,269 @@ class StartPage(QWidget):
 
         self.setObjectName("StartPage")
 
-        # Main layout
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # =====================================
-        # LEFT SIDEBAR
+        # SIDEBAR
         # =====================================
 
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(245)
+        sidebar.setFixedWidth(230)
 
-        side_layout = QVBoxLayout(sidebar)
-        side_layout.setContentsMargins(18, 28, 18, 20)
-        side_layout.setSpacing(12)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(15, 35, 15, 20)
+        sidebar_layout.setSpacing(12)
 
-        logo = QLabel("WT  WIND TURBINE")
-        logo.setStyleSheet(
-            "font-size: 18px; font-weight: bold; padding: 12px;"
-        )
-
-        side_layout.addWidget(logo)
-
-        subtitle = QLabel("STRUCTURAL ANALYSER")
-        subtitle.setObjectName("SecondaryText")
-        subtitle.setStyleSheet("font-size: 9px; padding-left: 12px;")
-
-        side_layout.addWidget(subtitle)
-        side_layout.addSpacing(30)
+        sidebar_layout.addSpacing(20)
 
         self.home_btn = self.create_nav_button("⌂    Home", True)
         self.projects_btn = self.create_nav_button("▣    Projects")
         self.settings_btn = self.create_nav_button("⚙    Settings")
 
-        side_layout.addWidget(self.home_btn)
-        side_layout.addWidget(self.projects_btn)
-        side_layout.addWidget(self.settings_btn)
+        sidebar_layout.addWidget(self.home_btn)
+        sidebar_layout.addWidget(self.projects_btn)
+        sidebar_layout.addWidget(self.settings_btn)
 
-        side_layout.addStretch()
-
-        footer = QLabel(
-            "WIND TURBINE ANALYSER\nVersion 1.0"
-        )
-        footer.setObjectName("SecondaryText")
-        footer.setStyleSheet("font-size: 10px; padding: 12px;")
-
-        side_layout.addWidget(footer)
+        sidebar_layout.addStretch()
 
         root.addWidget(sidebar)
 
         # =====================================
-        # MAIN CONTENT
+        # PAGE CONTAINER
         # =====================================
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        self.pages = QStackedWidget()
 
-        content = QWidget()
+        self.home_page = self.create_home_page()
+        self.projects_page = self.create_projects_page()
+        self.settings_page = self.create_settings_page()
 
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(38, 28, 38, 30)
-        content_layout.setSpacing(24)
+        self.pages.addWidget(self.home_page)
+        self.pages.addWidget(self.projects_page)
+        self.pages.addWidget(self.settings_page)
 
-        scroll.setWidget(content)
-
-        root.addWidget(scroll)
+        root.addWidget(self.pages)
 
         # =====================================
-        # TOP TOOLBAR
+        # NAVIGATION CONNECTIONS
         # =====================================
 
-        topbar = QHBoxLayout()
-
-        page_label = QLabel("HOME")
-        page_label.setObjectName("SecondaryText")
-
-        settings_button = QPushButton("⚙  Settings")
-        settings_button.setMinimumHeight(38)
-
-        settings_button.clicked.connect(self.show_settings)
-
-        topbar.addWidget(page_label)
-        topbar.addStretch()
-        topbar.addWidget(settings_button)
-
-        content_layout.addLayout(topbar)
-
-        # =====================================
-        # WELCOME SECTION
-        # =====================================
-
-        welcome = QLabel(
-            "Welcome to Wind Turbine\nStructural Analyser"
+        self.home_btn.clicked.connect(
+            lambda: self.change_page(0)
         )
-        welcome.setObjectName("PageTitle")
 
-        subtitle = QLabel(
-            "Design, simulate and analyse wind turbine structures."
+        self.projects_btn.clicked.connect(
+            lambda: self.change_page(1)
         )
-        subtitle.setObjectName("SecondaryText")
 
-        content_layout.addWidget(welcome)
-        content_layout.addWidget(subtitle)
+        self.settings_btn.clicked.connect(
+            lambda: self.change_page(2)
+        )
 
-        # =====================================
-        # ACTION CARDS
-        # =====================================
+    # =====================================
+    # NAVIGATION BUTTON
+    # =====================================
 
-        cards_layout = QGridLayout()
-        cards_layout.setSpacing(18)
+    def create_nav_button(self, text, active=False):
+
+        button = QPushButton(text)
+        button.setMinimumHeight(46)
+        button.setCursor(Qt.PointingHandCursor)
+
+        button.setObjectName(
+            "ActiveNavButton" if active else "NavButton"
+        )
+
+        return button
+
+    # =====================================
+    # CHANGE PAGE
+    # =====================================
+
+    def change_page(self, index):
+
+        self.pages.setCurrentIndex(index)
+
+        buttons = [
+            self.home_btn,
+            self.projects_btn,
+            self.settings_btn
+        ]
+
+        for i, button in enumerate(buttons):
+
+            button.setObjectName(
+                "ActiveNavButton" if i == index else "NavButton"
+            )
+
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    # =====================================
+    # PAGE HEADER
+    # =====================================
+
+    def create_header(self, title, subtitle):
+
+        layout = QVBoxLayout()
+
+        heading = QLabel(title)
+        heading.setObjectName("PageTitle")
+
+        description = QLabel(subtitle)
+        description.setObjectName("SecondaryText")
+        description.setWordWrap(True)
+
+        layout.addWidget(heading)
+        layout.addWidget(description)
+
+        return layout
+
+    # =====================================
+    # HOME PAGE
+    # =====================================
+
+    def create_home_page(self):
+
+        page = QWidget()
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 35, 40, 35)
+        layout.setSpacing(25)
+
+        # Header
+
+        layout.addLayout(
+            self.create_header(
+                "Wind Turbine Structural Analyser",
+                "A platform for structural design, simulation and engineering analysis."
+            )
+        )
+
+        layout.addSpacing(10)
+
+        intro_title = QLabel("About This Software")
+        intro_title.setObjectName("SectionTitle")
+
+        intro = QLabel(
+            "Wind Turbine Structural Analyser is a mechanical engineering "
+            "application designed to study the structural behaviour of "
+            "wind turbine components under different loading conditions. "
+            "It helps users investigate deformation, stress distribution "
+            "and structural failure."
+        )
+
+        intro.setObjectName("SecondaryText")
+        intro.setWordWrap(True)
+
+        layout.addWidget(intro_title)
+        layout.addWidget(intro)
+
+        layout.addSpacing(15)
+
+        capabilities_title = QLabel("What Can You Do?")
+        capabilities_title.setObjectName("SectionTitle")
+
+        layout.addWidget(capabilities_title)
+
+        features = [
+            (
+                "01",
+                "Structural Analysis",
+                "Evaluate the structural response of wind turbine components."
+            ),
+            (
+                "02",
+                "Wind Loading",
+                "Study the effect of wind forces on turbine structures."
+            ),
+            (
+                "03",
+                "Stress & Failure Analysis",
+                "Investigate stress, strain and possible failure conditions."
+            ),
+            (
+                "04",
+                "3D Visualisation",
+                "View turbine geometry and visualise structural analysis results."
+            )
+        ]
+
+        grid = QGridLayout()
+        grid.setSpacing(16)
+
+        for i, (number, title, description) in enumerate(features):
+
+            card = QFrame()
+            card.setObjectName("Panel")
+
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(20, 20, 20, 20)
+            card_layout.setSpacing(10)
+
+            number_label = QLabel(number)
+            number_label.setStyleSheet(
+                "color: #00B8D9; font-size: 15px; font-weight: bold;"
+            )
+
+            title_label = QLabel(title)
+            title_label.setObjectName("SectionTitle")
+
+            description_label = QLabel(description)
+            description_label.setObjectName("SecondaryText")
+            description_label.setWordWrap(True)
+
+            card_layout.addWidget(number_label)
+            card_layout.addWidget(title_label)
+            card_layout.addWidget(description_label)
+            card_layout.addStretch()
+
+            grid.addWidget(card, i // 2, i % 2)
+
+        layout.addLayout(grid)
+
+        layout.addStretch()
+
+        return page
+
+    # =====================================
+    # PROJECTS PAGE
+    # =====================================
+
+    def create_projects_page(self):
+
+        page = QWidget()
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 35, 40, 35)
+        layout.setSpacing(22)
+
+        layout.addLayout(
+            self.create_header(
+                "Projects",
+                "Create a new analysis project or continue working on an existing one."
+            )
+        )
+
+        # Action cards
+
+        cards = QGridLayout()
+        cards.setSpacing(18)
 
         new_card = self.create_action_card(
             "＋",
             "NEW PROJECT",
-            "Start a new structural analysis project.",
+            "Create a new wind turbine structural analysis project.",
             "Create New Project"
         )
 
         import_card = self.create_action_card(
             "⇧",
-            "IMPORT CAD MODEL",
-            "Import an existing STEP model for analysis.",
+            "IMPORT STEP MODEL",
+            "Import an existing 3D CAD model for structural analysis.",
             "Browse STEP Files"
         )
 
@@ -154,25 +293,23 @@ class StartPage(QWidget):
             self.import_step_requested.emit
         )
 
-        cards_layout.addWidget(new_card, 0, 0)
-        cards_layout.addWidget(import_card, 0, 1)
+        cards.addWidget(new_card, 0, 0)
+        cards.addWidget(import_card, 0, 1)
 
-        content_layout.addLayout(cards_layout)
+        layout.addLayout(cards)
 
-        # =====================================
-        # RECENT PROJECTS
-        # =====================================
+        # Recent projects
 
-        recent_heading = QLabel("Recent Projects")
-        recent_heading.setObjectName("SectionTitle")
+        recent_title = QLabel("Recent Projects")
+        recent_title.setObjectName("SectionTitle")
 
-        content_layout.addWidget(recent_heading)
+        layout.addWidget(recent_title)
 
-        recent_panel = QFrame()
-        recent_panel.setObjectName("Panel")
+        panel = QFrame()
+        panel.setObjectName("Panel")
 
-        recent_layout = QVBoxLayout(recent_panel)
-        recent_layout.setContentsMargins(15, 15, 15, 15)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(15, 15, 15, 15)
 
         self.project_table = QTableWidget(0, 3)
 
@@ -187,102 +324,24 @@ class StartPage(QWidget):
         )
 
         self.project_table.verticalHeader().setVisible(False)
-        self.project_table.setMinimumHeight(130)
+
         self.project_table.setAlternatingRowColors(True)
+
         self.project_table.setEditTriggers(
             QTableWidget.NoEditTriggers
         )
 
-        recent_layout.addWidget(self.project_table)
+        self.project_table.setMinimumHeight(220)
 
-        content_layout.addWidget(recent_panel)
+        panel_layout.addWidget(self.project_table)
+
+        layout.addWidget(panel)
 
         self.show_empty_projects()
 
-        # =====================================
-        # QUICK INFORMATION
-        # =====================================
+        layout.addStretch()
 
-        info_heading = QLabel("Analysis Capabilities")
-        info_heading.setObjectName("SectionTitle")
-
-        content_layout.addWidget(info_heading)
-
-        features = [
-            ("01", "Structural Analysis",
-             "Evaluate structural response under applied loads."),
-
-            ("02", "Wind Loading",
-             "Study the effects of wind loads on the turbine."),
-
-            ("03", "Stress & Failure Analysis",
-             "Investigate stress distribution and failure."),
-
-            ("04", "3D Visualisation",
-             "Visualise geometry and analysis results.")
-        ]
-
-        info_grid = QGridLayout()
-        info_grid.setSpacing(14)
-
-        for index, (number, title, description) in enumerate(features):
-
-            panel = QFrame()
-            panel.setObjectName("Panel")
-
-            panel_layout = QVBoxLayout(panel)
-            panel_layout.setContentsMargins(18, 15, 18, 15)
-            panel_layout.setSpacing(8)
-
-            number_label = QLabel(number)
-            number_label.setStyleSheet(
-                "color: #00B8D9; font-size: 13px; font-weight: bold;"
-            )
-
-            title_label = QLabel(title)
-            title_label.setObjectName("SectionTitle")
-
-            description_label = QLabel(description)
-            description_label.setObjectName("SecondaryText")
-            description_label.setWordWrap(True)
-
-            panel_layout.addWidget(number_label)
-            panel_layout.addWidget(title_label)
-            panel_layout.addWidget(description_label)
-
-            info_grid.addWidget(
-                panel,
-                index // 2,
-                index % 2
-            )
-
-        content_layout.addLayout(info_grid)
-        content_layout.addStretch()
-
-        # =====================================
-        # NAVIGATION CONNECTIONS
-        # =====================================
-
-        self.home_btn.clicked.connect(self.show_home)
-        self.projects_btn.clicked.connect(self.show_projects)
-        self.settings_btn.clicked.connect(self.show_settings)
-
-    # =====================================
-    # NAVIGATION BUTTON
-    # =====================================
-
-    def create_nav_button(self, text, active=False):
-
-        button = QPushButton(text)
-        button.setMinimumHeight(45)
-        button.setCursor(Qt.PointingHandCursor)
-
-        if active:
-            button.setObjectName("ActiveNavButton")
-        else:
-            button.setObjectName("NavButton")
-
-        return button
+        return page
 
     # =====================================
     # ACTION CARD
@@ -294,15 +353,15 @@ class StartPage(QWidget):
 
         card = QFrame()
         card.setObjectName("ActionCard")
-        card.setMinimumHeight(210)
+        card.setMinimumHeight(205)
 
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(22, 20, 22, 20)
-        layout.setSpacing(12)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(22, 20, 22, 20)
+        card_layout.setSpacing(12)
 
         icon_label = QLabel(icon)
         icon_label.setStyleSheet(
-            "font-size: 30px; color: #00B8D9;"
+            "color: #00B8D9; font-size: 30px;"
         )
 
         heading = QLabel(title)
@@ -317,15 +376,46 @@ class StartPage(QWidget):
         button.setMinimumHeight(42)
         button.setCursor(Qt.PointingHandCursor)
 
-        layout.addWidget(icon_label)
-        layout.addWidget(heading)
-        layout.addWidget(description_label)
-        layout.addStretch()
-        layout.addWidget(button)
+        card_layout.addWidget(icon_label)
+        card_layout.addWidget(heading)
+        card_layout.addWidget(description_label)
+        card_layout.addStretch()
+        card_layout.addWidget(button)
 
         card.button = button
 
         return card
+
+    # =====================================
+    # SETTINGS PAGE
+    # =====================================
+
+    def create_settings_page(self):
+
+        page = QWidget()
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 35, 40, 35)
+        layout.setSpacing(20)
+
+        layout.addLayout(
+            self.create_header(
+                "Settings",
+                "Manage application preferences and configuration."
+            )
+        )
+
+        message = QLabel(
+            "Application settings will be available here."
+        )
+
+        message.setObjectName("SecondaryText")
+
+        layout.addWidget(message)
+
+        layout.addStretch()
+
+        return page
 
     # =====================================
     # RECENT PROJECTS
@@ -345,27 +435,4 @@ class StartPage(QWidget):
 
         self.project_table.setItem(
             0, 2, QTableWidgetItem("-")
-        )
-
-    # =====================================
-    # NAVIGATION ACTIONS
-    # =====================================
-
-    def show_home(self):
-        pass
-
-    def show_projects(self):
-
-        QMessageBox.information(
-            self,
-            "Projects",
-            "Project management will be implemented next."
-        )
-
-    def show_settings(self):
-
-        QMessageBox.information(
-            self,
-            "Settings",
-            "Application settings will be implemented next."
         )

@@ -2,10 +2,10 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QFrame,
-    QPushButton,
-    QGridLayout
+    QPushButton
 )
 
 from PySide6.QtCore import Qt
@@ -16,47 +16,33 @@ class DashboardPage(QWidget):
     def __init__(self):
         super().__init__()
 
+        self.setObjectName("dashboardPage")
+
         main_layout = QVBoxLayout(self)
-
         main_layout.setContentsMargins(30, 25, 30, 25)
-        main_layout.setSpacing(25)
+        main_layout.setSpacing(22)
 
-        # -------------------------
-        # WELCOME SECTION
-        # -------------------------
-
+        # Welcome section
         welcome = QLabel("Welcome to Wind Turbine Analysis")
-
-        welcome.setStyleSheet("""
-            color: white;
-            font-size: 27px;
-            font-weight: bold;
-        """)
+        welcome.setObjectName("welcomeTitle")
 
         subtitle = QLabel(
             "Structural Analysis and Performance Evaluation"
         )
-
-        subtitle.setStyleSheet("""
-            color: #91a4b8;
-            font-size: 14px;
-        """)
+        subtitle.setObjectName("subtitle")
 
         main_layout.addWidget(welcome)
         main_layout.addWidget(subtitle)
 
-        # -------------------------
-        # INFORMATION CARDS
-        # -------------------------
-
+        # Information cards
         cards_layout = QGridLayout()
-        cards_layout.setSpacing(18)
+        cards_layout.setSpacing(15)
 
         card_data = [
-            ("Turbine Height", "90 m"),
-            ("Wind Speed", "45 m/s"),
-            ("Material", "Structural Steel"),
-            ("Analysis Status", "Not Started")
+            ("TURBINE HEIGHT", "90 m"),
+            ("WIND SPEED", "45 m/s"),
+            ("SELECTED MATERIAL", "Structural Steel"),
+            ("ANALYSIS STATUS", "Not Started")
         ]
 
         for index, (title, value) in enumerate(card_data):
@@ -65,21 +51,14 @@ class DashboardPage(QWidget):
             card.setObjectName("infoCard")
 
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(20, 18, 20, 18)
 
             title_label = QLabel(title)
-
-            title_label.setStyleSheet("""
-                color: #9aafc4;
-                font-size: 14px;
-            """)
+            title_label.setObjectName("cardTitle")
 
             value_label = QLabel(value)
-
-            value_label.setStyleSheet("""
-                color: white;
-                font-size: 23px;
-                font-weight: bold;
-            """)
+            value_label.setObjectName("cardValue")
+            value_label.setWordWrap(True)
 
             card_layout.addWidget(title_label)
             card_layout.addWidget(value_label)
@@ -92,77 +71,78 @@ class DashboardPage(QWidget):
 
         main_layout.addLayout(cards_layout)
 
-        # -------------------------
-        # QUICK ACTIONS
-        # -------------------------
-
+        # Quick actions
         actions_title = QLabel("Quick Actions")
-
-        actions_title.setStyleSheet("""
-            color: white;
-            font-size: 20px;
-            font-weight: bold;
-        """)
+        actions_title.setObjectName("sectionTitle")
 
         main_layout.addWidget(actions_title)
 
         actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(15)
 
-        actions = [
-            "Create New Analysis",
-            "Import STEP Model",
-            "Load Project"
-        ]
+        self.new_analysis_btn = QPushButton(
+            "+ Create New Analysis"
+        )
 
-        for action in actions:
+        self.import_btn = QPushButton(
+            "Import STEP Model"
+        )
 
-            button = QPushButton(action)
+        self.load_btn = QPushButton(
+            "Load Existing Project"
+        )
 
-            button.setMinimumHeight(50)
-
+        for button in [
+            self.new_analysis_btn,
+            self.import_btn,
+            self.load_btn
+        ]:
+            button.setMinimumHeight(48)
             button.setCursor(Qt.PointingHandCursor)
-
             actions_layout.addWidget(button)
 
         main_layout.addLayout(actions_layout)
 
-        # -------------------------
-        # RECENT PROJECTS
-        # -------------------------
-
+        # Recent projects
         recent_title = QLabel("Recent Projects")
-
-        recent_title.setStyleSheet("""
-            color: white;
-            font-size: 20px;
-            font-weight: bold;
-        """)
+        recent_title.setObjectName("sectionTitle")
 
         main_layout.addWidget(recent_title)
 
-        recent_project = QLabel(
-            "No recent projects available."
+        recent_box = QFrame()
+        recent_box.setObjectName("recentBox")
+
+        recent_layout = QVBoxLayout(recent_box)
+
+        recent_label = QLabel(
+            "No recent projects available.\n"
+            "Create a new analysis to get started."
         )
 
-        recent_project.setStyleSheet("""
-            color: #91a4b8;
-            font-size: 14px;
-            padding: 15px;
-            background-color: #1b2938;
-            border-radius: 8px;
-        """)
+        recent_label.setObjectName("recentText")
+        recent_label.setAlignment(Qt.AlignCenter)
 
-        main_layout.addWidget(recent_project)
+        recent_layout.addWidget(recent_label)
+
+        main_layout.addWidget(recent_box)
 
         main_layout.addStretch()
 
-        # -------------------------
-        # PAGE STYLING
-        # -------------------------
-
+        # Styling
         self.setStyleSheet("""
-            QWidget {
+            QWidget#dashboardPage {
                 background-color: #101923;
+            }
+
+            QLabel#welcomeTitle {
+                color: white;
+                font-size: 27px;
+                font-weight: bold;
+            }
+
+            QLabel#subtitle {
+                color: #91a4b8;
+                font-size: 14px;
             }
 
             QFrame#infoCard {
@@ -172,16 +152,46 @@ class DashboardPage(QWidget):
                 min-height: 110px;
             }
 
+            QLabel#cardTitle {
+                color: #9aafc4;
+                font-size: 12px;
+                font-weight: bold;
+            }
+
+            QLabel#cardValue {
+                color: white;
+                font-size: 21px;
+                font-weight: bold;
+            }
+
+            QLabel#sectionTitle {
+                color: white;
+                font-size: 19px;
+                font-weight: bold;
+            }
+
             QPushButton {
                 background-color: #1769aa;
                 color: white;
                 border: none;
                 border-radius: 7px;
-                font-size: 14px;
                 padding: 10px;
+                font-size: 13px;
             }
 
             QPushButton:hover {
                 background-color: #2585cf;
+            }
+
+            QFrame#recentBox {
+                background-color: #1b2938;
+                border: 1px solid #2b3d50;
+                border-radius: 10px;
+                min-height: 110px;
+            }
+
+            QLabel#recentText {
+                color: #91a4b8;
+                font-size: 14px;
             }
         """)

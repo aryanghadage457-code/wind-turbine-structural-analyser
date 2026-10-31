@@ -1,5 +1,3 @@
-from gui.dashboard import DashboardPage
-
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -12,88 +10,64 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from gui.components.sidebar import Sidebar
+from gui.dashboard import DashboardPage
 
 
 class MainWindow(QMainWindow):
 
     def __init__(self):
-
         super().__init__()
 
-        # Window properties
         self.setWindowTitle(
             "Wind Turbine Structural Analyser"
         )
 
         self.resize(1400, 850)
 
-        # Main central widget
+        # Central widget
         central = QWidget()
         self.setCentralWidget(central)
 
         main_layout = QHBoxLayout(central)
-
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # -------------------------
-        # SIDEBAR
-        # -------------------------
-
+        # Sidebar
         self.sidebar = Sidebar()
-
         main_layout.addWidget(self.sidebar)
 
-        # -------------------------
-        # MAIN WORKSPACE
-        # -------------------------
-
+        # Workspace
         workspace = QWidget()
 
         workspace_layout = QVBoxLayout(workspace)
-
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
 
-        # Top navigation bar
+        # Top bar
         self.topbar = QLabel("Dashboard")
-
         self.topbar.setFixedHeight(65)
-
-        self.topbar.setStyleSheet("""
-            color: white;
-            font-size: 20px;
-            font-weight: bold;
-            padding-left: 25px;
-            background-color: #202c3b;
-        """)
-
         self.topbar.setAlignment(
             Qt.AlignVCenter | Qt.AlignLeft
         )
 
+        self.topbar.setStyleSheet("""
+            background-color: #202c3b;
+            color: white;
+            font-size: 21px;
+            font-weight: bold;
+            padding-left: 25px;
+        """)
+
         workspace_layout.addWidget(self.topbar)
 
-        # -------------------------
-        # STACKED WIDGET
-        # -------------------------
-
+        # Stacked widget
         self.pages = QStackedWidget()
-
-        self.pages.setStyleSheet("""
-            QStackedWidget {
-                background-color: #101923;
-            }
-        """)
 
         workspace_layout.addWidget(self.pages)
 
         main_layout.addWidget(workspace)
 
-        # -------------------------
-        # CREATE ALL PAGES
-        # -------------------------
-
+        # Page names and storage
         self.page_names = [
             "Dashboard",
             "Geometry",
@@ -103,32 +77,31 @@ class MainWindow(QMainWindow):
             "Results"
         ]
 
+        self.page_widgets = {}
+
+        # Create pages
         for name in self.page_names:
-                if name == "Dashboard":
-                     page = DashboardPage()
 
-                else:
-                    page = self.create_page(name)
+            if name == "Dashboard":
+                page = DashboardPage()
 
-                    self.pages.addWidget(page)
+            else:
+                page = self.create_page(name)
 
-        # -------------------------
-        # CONNECT SIDEBAR BUTTONS
-        # -------------------------
+            self.pages.addWidget(page)
 
-        for index, name in enumerate(self.page_names):
+            self.page_widgets[name] = page
+
+        # Connect navigation buttons
+        for name in self.page_names:
 
             self.sidebar.buttons[name].clicked.connect(
-                lambda checked=False, i=index, n=name:
-                self.change_page(i, n)
+                lambda checked=False, page_name=name:
+                self.change_page(page_name)
             )
 
-        # Initial page
-        self.change_page(0, "Dashboard")
-
-    # -------------------------
-    # CREATE PAGE
-    # -------------------------
+        # Open Dashboard by default
+        self.change_page("Dashboard")
 
     def create_page(self, name):
 
@@ -137,7 +110,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
 
         title = QLabel(name)
-
         title.setAlignment(Qt.AlignCenter)
 
         title.setStyleSheet("""
@@ -153,21 +125,23 @@ class MainWindow(QMainWindow):
         description.setAlignment(Qt.AlignCenter)
 
         description.setStyleSheet("""
-            color: #9caec2;
+            color: #91a4b8;
             font-size: 16px;
         """)
 
         layout.addWidget(title)
         layout.addWidget(description)
 
+        page.setStyleSheet("""
+            background-color: #101923;
+        """)
+
         return page
 
-    # -------------------------
-    # CHANGE PAGE
-    # -------------------------
+    def change_page(self, name):
 
-    def change_page(self, index, name):
+        page = self.page_widgets[name]
 
-        self.pages.setCurrentIndex(index)
+        self.pages.setCurrentWidget(page)
 
         self.topbar.setText(name)

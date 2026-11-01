@@ -22,7 +22,7 @@ Command line:
     python grouping.py "C:/step_test/model_b/Mini Wind Turbine.STEP" --up Y
     python grouping.py "C:/step_test/model_b/Mini Wind Turbine.STEP" --up Y --tower-height 87.6
     options: --rotor-r 0.075   --nacelle-z 0.62   --blade-len 0.20
-             --min-frac 0.05   --nogui
+             --min-frac 0.02   --nogui
 """
 import sys
 import math
@@ -96,6 +96,7 @@ def group_model(tower_height=None, thresholds=None):
     """Classify the current gmsh model, optionally scale it so the Tower group is
     `tower_height` metres tall, and add one physical group per class.
     Returns a dict with a report."""
+    gmsh.model.removePhysicalGroups()   # re-running must not duplicate the groups
     th = dict(DEFAULTS)
     if thresholds:
         unknown = set(thresholds) - set(DEFAULTS)
@@ -114,7 +115,7 @@ def group_model(tower_height=None, thresholds=None):
         if current <= 0:
             raise GroupingError("Could not measure the tower height")
         factor = tower_height / current
-        gmsh.model.occ.dilate(gmsh.model.getEntities(dim), 0, 0, 0, factor, factor, factor)
+        gmsh.model.occ.dilate(gmsh.model.getEntities(), 0, 0, 0, factor, factor, factor)
         gmsh.model.occ.synchronize()
         dim, groups, H = classify(th)            # same result: thresholds are relative to H
         _check(groups)
@@ -141,7 +142,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
     ap.add_argument("--up", default="Z", choices=["X", "Y", "Z", "x", "y", "z"])
-    ap.add_argument("--min-frac", type=float, default=0.05)
+    ap.add_argument("--min-frac", type=float, default=0.02)
     ap.add_argument("--tower-height", type=float, default=None,
                     help="scale the model so the Tower group is this tall (metres)")
     ap.add_argument("--rotor-r", type=float, default=DEFAULTS["rotor_r_min"])

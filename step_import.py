@@ -13,7 +13,7 @@ Library use:
 
 Command line:
     python step_import.py "C:/step_test/model_b/Mini Wind Turbine.STEP" --up Y
-    options: --min-frac 0.05   (remove parts smaller than 5 % of the model size)
+    options: --min-frac 0.02   (remove parts smaller than 2 % of the model size)
              --nogui           (no window)
              --out cleaned.step
 """
@@ -49,7 +49,7 @@ def _diag(b):
     return math.sqrt((b[3] - b[0]) ** 2 + (b[4] - b[1]) ** 2 + (b[5] - b[2]) ** 2)
 
 
-def import_step(path, up_axis="Z", min_part_frac=0.05):
+def import_step(path, up_axis="Z", min_part_frac=0.02):
     """Import `path` into the current gmsh model and normalise it.
     gmsh.initialize() must already have been called.
     Returns a dict with a report of what was done."""
@@ -94,9 +94,9 @@ def import_step(path, up_axis="Z", min_part_frac=0.05):
 
     # 2) up axis -> +Z
     if up_axis == "Y":      # rotate +90 deg about X: Y -> Z
-        gmsh.model.occ.rotate(gmsh.model.getEntities(top), 0, 0, 0, 1, 0, 0, math.pi / 2)
+        gmsh.model.occ.rotate(gmsh.model.getEntities(), 0, 0, 0, 1, 0, 0, math.pi / 2)
     elif up_axis == "X":    # rotate -90 deg about Y: X -> Z
-        gmsh.model.occ.rotate(gmsh.model.getEntities(top), 0, 0, 0, 0, 1, 0, -math.pi / 2)
+        gmsh.model.occ.rotate(gmsh.model.getEntities(), 0, 0, 0, 0, 1, 0, -math.pi / 2)
     gmsh.model.occ.synchronize()
 
     # 3) put the base on z = 0 and its centre on the origin
@@ -106,7 +106,7 @@ def import_step(path, up_axis="Z", min_part_frac=0.05):
     base = [b for b in base if b[2] < lo[2] + 0.01 * height]
     cx = (min(b[0] for b in base) + max(b[3] for b in base)) / 2
     cy = (min(b[1] for b in base) + max(b[4] for b in base)) / 2
-    gmsh.model.occ.translate(gmsh.model.getEntities(top), -cx, -cy, -lo[2])
+    gmsh.model.occ.translate(gmsh.model.getEntities(), -cx, -cy, -lo[2])
     gmsh.model.occ.synchronize()
 
     lo, hi = _parts_bounds(top)
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
     ap.add_argument("--up", default="Z", choices=["X", "Y", "Z", "x", "y", "z"])
-    ap.add_argument("--min-frac", type=float, default=0.05)
+    ap.add_argument("--min-frac", type=float, default=0.02)
     ap.add_argument("--nogui", action="store_true")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
@@ -140,6 +140,10 @@ if __name__ == "__main__":
     print(f"Volumes: {rep['volumes_before']} -> {rep['volumes_after']}")
     print(f"Surfaces: {rep['surfaces_before']} -> {rep['surfaces_after']}")
     print(f"Removed {len(rep['removed'])} small parts")
+    for tag, size in rep['removed'][:10]:
+        print(f"   removed part {tag}, size {size} m")
+    if len(rep['removed']) > 10:
+        print(f"   ... and {len(rep['removed']) - 10} more")
     print("Size in metres (x, y, z):", rep["size_m"])
     print("Bounds (xmin,ymin,zmin,xmax,ymax,zmax):", rep["bounds_m"])
     if a.out:

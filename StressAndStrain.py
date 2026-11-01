@@ -874,46 +874,209 @@ def export_element_results(result: StressStrainResult, out_dir: str = "results",
     return {"stress": stress_path, "strain": strain_path}
 
 
+
+# ----------------------------------------------------------------------------
+# Display results directly in Microsoft Excel (no files are saved)
+# ----------------------------------------------------------------------------
+def display_element_results_in_excel(result: StressStrainResult, mesh: Optional[Mesh] = None):
+    """Open two unsaved Excel workbooks and display all element-wise results.
+
+    Requires Windows, Microsoft Excel, and: pip install pywin32
+    The workbooks exist only in the Excel session; this function never saves them.
+    """
+    if os.name != "nt":
+        raise OSError("Direct Excel display is supported only on Windows.")
+    try:
+        import win32com.client
+    except ImportError as exc:
+        raise ImportError("Direct Excel display needs pywin32. Install it with: python -m pip install pywin32") from exc
+
+    excel = win32com.client.DispatchEx("Excel.Application")
+    excel.Visible = True
+    excel.DisplayAlerts = False
+
+    def add_sheet(wb, sheet_name, surface_name, kind):
+        ws = wb.Worksheets.Add()
+        ws.Name = sheet_name
+        surf = result.surface(surface_name)
+        if surf is None:
+            ws.Cells(1, 1).Value = (
+                f"{surface_name.capitalize()}-surface results are NOT AVAILABLE; "
+                "no values were estimated or replaced with zero."
+            )
+            ws.Cells(1, 1).Font.Bold = True
+            return
+
+        table_fn = element_stress_table if kind == "stress" else element_strain_table
+        headers, rows = table_fn(result, surface_name, mesh)
+        values = [headers] + rows
+        # One bulk transfer is much faster than writing thousands of cells individually.
+        ws.Range(ws.Cells(1, 1), ws.Cells(len(values), len(headers))).Value = tuple(tuple(r) for r in values)
+        header = ws.Range(ws.Cells(1, 1), ws.Cells(1, len(headers)))
+        header.Font.Bold = True
+        header.WrapText = True
+        header.Interior.Color = 0xEBDDD7
+        ws.Rows(1).RowHeight = 42
+        ws.Columns.AutoFit()
+        ws.Range("A2").Select()
+        excel.ActiveWindow.FreezePanes = True
+        ws.Range(ws.Cells(1, 1), ws.Cells(len(values), len(headers))).AutoFilter()
+
+    for kind in ("stress", "strain"):
+        wb = excel.Workbooks.Add()
+        # Keep only the first worksheet, then create the required surface sheets.
+        while wb.Worksheets.Count > 1:
+            wb.Worksheets(wb.Worksheets.Count).Delete()
+        first = wb.Worksheets(1)
+        first.Name = SHEET_NAMES["outer"]
+        # Populate first sheet and add inner sheet.
+        surf = result.surface("outer")
+        if surf is None:
+            first.Cells(1, 1).Value = "Outer-surface results are NOT AVAILABLE."
+        else:
+            table_fn = element_stress_table if kind == "stress" else element_strain_table
+            headers, rows = table_fn(result, "outer", mesh)
+            values = [headers] + rows
+            first.Range(first.Cells(1, 1), first.Cells(len(values), len(headers))).Value = tuple(tuple(r) for r in values)
+            hdr = first.Range(first.Cells(1, 1), first.Cells(1, len(headers)))
+            hdr.Font.Bold = True
+            hdr.WrapText = True
+            hdr.Interior.Color = 0xEBDDD7
+            first.Rows(1).RowHeight = 42
+            first.Columns.AutoFit()
+            first.Range("A2").Select()
+            excel.ActiveWindow.FreezePanes = True
+            first.Range(first.Cells(1, 1), first.Cells(len(values), len(headers))).AutoFilter()
+
+        inner = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+        inner.Name = SHEET_NAMES["inner"]
+        surf = result.surface("inner")
+        if surf is None:
+            inner.Cells(1, 1).Value = "Inner-surface results are NOT AVAILABLE; no values were estimated or set to zero."
+        else:
+            headers, rows = table_fn(result, "inner", mesh)
+            values = [headers] + rows
+            inner.Range(inner.Cells(1, 1), inner.Cells(len(values), len(headers))).Value = tuple(tuple(r) for r in values)
+            hdr = inner.Range(inner.Cells(1, 1), inner.Cells(1, len(headers)))
+            hdr.Font.Bold = True
+            hdr.WrapText = True
+            hdr.Interior.Color = 0xEBDDD7
+            inner.Rows(1).RowHeight = 42
+            inner.Columns.AutoFit()
+            inner.Range("A2").Select()
+            excel.ActiveWindow.FreezePanes = True
+            inner.Range(inner.Cells(1, 1), inner.Cells(len(values), len(headers))).AutoFilter()
+
+        notes = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+        notes.Name = NOTES_SHEET
+        note_lines = _export_notes(kind, result)
+        notes.Range(notes.Cells(1, 1), notes.Cells(len(note_lines), 1)).Value = tuple((line,) for line in note_lines)
+        notes.Columns(1).ColumnWidth = 110
+        notes.Cells(1, 1).Font.Bold = True
+
+    print("\nOpened stress and strain results in Microsoft Excel. The workbooks are NOT saved.")
+    print("Keep the Excel windows open to view the results. Closing them without saving discards the workbooks.")
+
+
+
 # ----------------------------------------------------------------------------
 # Command line
 # ----------------------------------------------------------------------------
 def _main():
     import argparse
-    ap = argparse.ArgumentParser(description="Combined gravity + wind stress and strain report.")
-    ap.add_argument("--gravity", default="out/res_G.pkl", help="pickled SolveResult, case G")
-    ap.add_argument("--inp", default="out/G.inp", help="CalculiX input of the G run (per-element E, nu, thickness)")
-    ap.add_argument("--mesh", default="out/full_mesh.pkl", help="optional mesh pickle (group names)")
-    ap.add_argument("--wind", default="zero", help="'zero', 'synthetic', or a pickled SolveResult (case W)")
-    ap.add_argument("--speed", type=float, default=0.0, help="wind speed v in m/s")
-    ap.add_argument("--strain-model", default="plane_stress", choices=STRAIN_MODELS)
-    ap.add_argument("--save-npz", default=None, help="write the outer/inner arrays to this .npz")
+
+    ap = argparse.ArgumentParser(
+        description="Combined gravity + wind stress and strain report."
+    )
+
+    ap.add_argument("--gravity", default="out/res_G.pkl",
+                    help="pickled SolveResult, case G")
+
+    ap.add_argument("--inp", default="out/G.inp",
+                    help="CalculiX input of the G run (per-element E, nu, thickness)")
+
+    ap.add_argument("--mesh", default="out/full_mesh.pkl",
+                    help="optional mesh pickle (group names)")
+
+    ap.add_argument("--wind", default="zero",
+                    help="'zero', 'synthetic', or a pickled SolveResult (case W)")
+
+    ap.add_argument("--speed", type=float, default=0.0,
+                    help="wind speed v in m/s")
+
+    ap.add_argument("--strain-model", default="plane_stress",
+                    choices=STRAIN_MODELS)
+
+    ap.add_argument("--save-npz", default=None,
+                    help="write the outer/inner arrays to this .npz")
+
+    # Excel options
+    ap.add_argument("--no-export", action="store_true",
+                    help="do not save Excel files")
+
+    ap.add_argument("--no-display", action="store_true",
+                    help="do not open Excel workbooks")
+
     ap.add_argument("--export-dir", default="results",
-                    help="folder for element_stress_results.xlsx / element_strain_results.xlsx (default: results)")
-    ap.add_argument("--no-export", action="store_true", help="print the summary only; do not write the Excel files")
+                    help="folder where Excel files will be saved")
+
     a = ap.parse_args()
 
+    # Load input data
     g = load_solve_result(a.gravity)
     n = g.stress_outer.shape[0]
+
     mesh = load_mesh(a.mesh) if a.mesh and os.path.isfile(a.mesh) else None
+
     mat = MaterialProps.from_inp(a.inp, n)
+
     if a.wind == "zero":
         w = make_zero_wind_result(g)
+
     elif a.wind == "synthetic":
         from synthetic_wind_data import make_synthetic_wind_result
         w = make_synthetic_wind_result(g)
+
     else:
         w = load_solve_result(a.wind)
-    res = calculate_stress_and_strain(g, w, a.speed, mat, strain_model=a.strain_model, mesh=mesh)
-    print(res.report())                                   # unchanged max/min summary
-    if not a.no_export:                                   # ...AND the complete per-element Excel files
-        paths = export_element_results(res, a.export_dir, mesh=mesh)
-        print(f"\nElement-wise results ({res.n_elems} elements, "
-              f"{'outer + inner' if res.inner is not None else 'outer only - inner unavailable'}):")
-        print(f"  stress : {paths['stress']}\n  strain : {paths['strain']}")
+
+    # Calculate stress and strain ONCE
+    res = calculate_stress_and_strain(
+        g, w, a.speed, mat,
+        strain_model=a.strain_model,
+        mesh=mesh
+    )
+
+    # Print summary
+    print(res.report())
+
+    # Option 1: Save Excel files
+    if not a.no_export:
+        paths = export_element_results(
+            res,
+            out_dir=a.export_dir,
+            mesh=mesh
+        )
+
+        print("\nExcel files saved successfully:")
+        print(f"  Stress: {paths['stress']}")
+        print(f"  Strain: {paths['strain']}")
+
+    # Option 2: Display results directly in Excel
+    if not a.no_display:
+        display_element_results_in_excel(res, mesh=mesh)
+
+    # Option 3: Save NPZ arrays (if requested)
     if a.save_npz:
-        arrays = {f"{s}_{k}": v for s in SURFACES if res.surface(s) is not None for k, v in res.as_dict(s).items()}
+        arrays = {
+            f"{s}_{k}": v
+            for s in SURFACES
+            if res.surface(s) is not None
+            for k, v in res.as_dict(s).items()
+        }
+
         np.savez_compressed(a.save_npz, **arrays)
-        print(f"\nsaved {len(arrays)} arrays to {a.save_npz}")
+        print(f"\nSaved {len(arrays)} arrays to {a.save_npz}")
 
 
 if __name__ == "__main__":

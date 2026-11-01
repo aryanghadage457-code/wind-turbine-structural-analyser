@@ -13,6 +13,7 @@ import numpy as np
  
 from contracts import Mesh, Settings, LoadSet, check_group_props
 from solver import bcs
+from solver import links
  
 G_ACC = 9.81
 DEFAULT_BLADE_EI_FILE = "data/nrel5mw_blade_ei.csv"   # NREL 5-MW BlFract, FlpStff, EdgStff (N*m^2)
@@ -23,10 +24,20 @@ def _id_lines(ids, per_line=10):
     return [", ".join(ids[i:i + per_line]) for i in range(0, len(ids), per_line)]
  
  
-def write_inp(path, mesh: Mesh, thickness, settings: Settings, case="G", loads: LoadSet = None,
-              write_frd=False, blade_ei_file=DEFAULT_BLADE_EI_FILE, blade_match="flap", blade_regions=12,
-              stiff_groups=None, ref_point=None, ref_group="Nacelle", ref_mode="distribute",
-              ref_nodes=None):
+def write_inp(
+    path, mesh: Mesh, thickness, settings: Settings,
+    case="G", loads: LoadSet = None,
+    write_frd=False,
+    blade_ei_file=DEFAULT_BLADE_EI_FILE,
+    blade_match="flap",
+    blade_regions=12,
+    stiff_groups=None,
+    ref_point=None,
+    ref_group="Nacelle",
+    ref_mode="distribute",
+    ref_nodes=None,
+    rigid_links=None
+):
     """Write <path> (a .inp file). Returns the path.
  
     ref_mode: "distribute" (default) shares each extra weight over its group's nodes as nodal forces whose
@@ -139,6 +150,14 @@ def write_inp(path, mesh: Mesh, thickness, settings: Settings, case="G", loads: 
  
     # --- fixed support: all 6 DOF on the base ring (text comes from bcs.py)
     L += bcs.boundary_lines(mesh, "base")
+    # --- rigid links between component patches
+    if rigid_links:
+        first_link_id = mesh.n_nodes + 1
+        L += links.link_lines(
+            mesh,
+            rigid_links,
+            first_id=first_link_id
+        )
  
     # --- load step
     L += ["*STEP", "*STATIC"]

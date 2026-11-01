@@ -10,7 +10,8 @@ from solver.ccx_writer import write_inp, default_ref_nodes
 from solver.ccx_runner import run_ccx
 from solver import ccx_reader as R
 from pathlib import Path
-from tools.head_stiffness_sweep import sweep
+from solver import links, bcs
+
 
 def build_full_mesh():
     from geometry.default_generator import load_params, build_default
@@ -19,7 +20,9 @@ def build_full_mesh():
     gmsh.initialize()
     gmsh.model.add("wind_turbine")
 
-    groups, thickness = build_default(load_params("data/default_turbine.json"))
+    groups, thickness = build_default(
+        load_params("data/default_turbine.json")
+    )
 
     # TEMPORARY DIAGNOSTIC ONLY
     # thickness["Nacelle"] *= 3
@@ -49,6 +52,77 @@ if __name__ == "__main__":
 
     bcs.assign_node_sets(mesh)
 
+    # -------------------------------------------------
+    # HUB - NACELLE RIGID LINK
+    # Coordinate-based patch selection
+    # -------------------------------------------------
+
+    def component_nodes(mesh, group):
+        group_id = mesh.group_names.index(group)
+        elements = mesh.elems[mesh.elem_group == group_id]
+        return np.unique(elements)
+
+    # Hub: select nodes near the rear pole
+    hub_nodes = component_nodes(mesh, "Hub")
+
+    hub_target = np.array([0.0, 3.5, 90.0])
+
+    hub_distance = np.linalg.norm(
+        mesh.nodes[hub_nodes] - hub_target,
+        axis=1
+    )
+
+    pa = hub_nodes[hub_distance <= 1.0]
+
+    # Nacelle: select nodes near the centre of its front plate
+    nacelle_nodes = component_nodes(mesh, "Nacelle")
+
+    nacelle_xyz = mesh.nodes[nacelle_nodes]
+
+    pb = nacelle_nodes[
+        (np.abs(nacelle_xyz[:, 1] - 3.0) < 1e-5) &
+        (np.abs(nacelle_xyz[:, 0]) <= 1.0) &
+        (np.abs(nacelle_xyz[:, 2] - 90.0) <= 1.0)
+    ]
+
+    print("\n--- INITIAL PATCH SELECTION ---")
+    print("Hub patch nodes:", len(pa))
+    print("Nacelle patch nodes:", len(pb))
+
+    print("\n--- HUB PATCH COORDINATES ---")
+    if len(pa):
+        print("X range:", mesh.nodes[pa, 0].min(), mesh.nodes[pa, 0].max())
+        print("Y range:", mesh.nodes[pa, 1].min(), mesh.nodes[pa, 1].max())
+        print("Z range:", mesh.nodes[pa, 2].min(), mesh.nodes[pa, 2].max())
+
+    print("\n--- NACELLE PATCH COORDINATES ---")
+    if len(pb):
+        print("X range:", mesh.nodes[pb, 0].min(), mesh.nodes[pb, 0].max())
+        print("Y range:", mesh.nodes[pb, 1].min(), mesh.nodes[pb, 1].max())
+        print("Z range:", mesh.nodes[pb, 2].min(), mesh.nodes[pb, 2].max())
+
+    # Expand each patch by one element row
+    pa = links.add_rows(mesh, pa, 1, "Hub")
+    pb = links.add_rows(mesh, pb, 1, "Nacelle")
+
+    print("\n--- EXPANDED PATCHES ---")
+    print("Hub patch nodes:", len(pa))
+    print("Nacelle patch nodes:", len(pb))
+
+    # Create the rigid link
+    LINKS = [
+        links.make_link(
+            mesh,
+            "HUB_NACELLE",
+            "Hub",
+            pa,
+            "Nacelle",
+            pb
+        )
+    ]
+
+    print("\nHub-Nacelle rigid link created successfully.")
+
     # Inspect shared nodes between component groups
     print("\n--- COMPONENT CONNECTION CHECK ---")
 
@@ -74,8 +148,11 @@ if __name__ == "__main__":
                 )
 
     bcs.preflight(
-        mesh, thickness, expected_base_radius=3.0
-    )  # raises if the mesh is not safe
+        mesh,
+        thickness,
+        expected_base_radius=3.0,
+        links=LINKS
+    )
 
     n_out, n_in = R.check_outward(mesh)
     print(f"\ntower element normals: {n_out} outward, {n_in} inward")
@@ -91,7 +168,10 @@ if __name__ == "__main__":
         # Use equivalent density for blades and steel density for other parts
         rho = 2050.0 if name.startswith("Blade_") else S.rho
 
-        w = area[mesh.elem_group == gi].sum() * thickness[name] * rho * 9.81
+        w = (
+            area[mesh.elem_group == gi].sum()
+            * thickness[name] * rho * 9.81
+        )
 
         W += w
         print(f"{name:8s} {w/1e3:10.1f} kN")
@@ -110,20 +190,12 @@ if __name__ == "__main__":
             f"mass = {ref['mass_kg']} kg, "
             f"COM = {ref['point']}"
         )
-    sweep(    
-        mesh,
-        thickness,
-        S,
-        params,
-        factors=(1, 10, 100, 1000),
-        ref_nodes=ref_nodes,
-        ccx=r"C:\calculix\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
-    )
+
     inp = write_inp(
         "out/G.inp", mesh, thickness, S,
         case="G",
         ref_nodes=ref_nodes,
-        stiff_groups={"Nacelle": 100, "Hub": 100}
+        rigid_links=LINKS
     )
 
     dat = run_ccx(

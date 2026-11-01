@@ -1,0 +1,59 @@
+﻿"""ccx_runner.py - run CalculiX on a .inp file and say clearly if it failed (Member 2)."""
+import os
+import shutil
+import subprocess
+ 
+CCX_NAMES = ("ccx", "ccx_2.21", "ccx_2.20", "ccx_2.19", "ccx.exe", "ccx_static.exe")
+ 
+ 
+class CcxError(RuntimeError):
+    """CalculiX did not finish normally."""
+ 
+ 
+def find_ccx(explicit=None):
+    cand = [explicit, os.environ.get("CCX_PATH")] + list(CCX_NAMES)
+    for c in cand:
+        if c and (shutil.which(c) or os.path.isfile(c)):
+            return shutil.which(c) or c
+    raise CcxError("CalculiX not found. Put ccx on PATH, or set the CCX_PATH environment variable, "
+                   "or pass ccx='full/path/to/ccx'")
+ 
+ 
+def run_ccx(inp_path, ccx=None, timeout=3600, threads=None):
+    """Run CalculiX on inp_path (with or without the .inp extension). Returns the .dat path.
+ 
+    Raises CcxError with the reason if it fails (error text, singular matrix, no .dat file...).
+    """
+    job = inp_path[:-4] if inp_path.lower().endswith(".inp") else inp_path
+    folder, name = os.path.split(os.path.abspath(job))
+    for ext in (".dat", ".frd", ".sta", ".cvg"):            # remove old results so a failure cannot hide
+        if os.path.exists(os.path.join(folder, name + ext)):
+            os.remove(os.path.join(folder, name + ext))
+    env = dict(os.environ)
+    if threads:
+        env["OMP_NUM_THREADS"] = str(threads)
+    try:
+        r = subprocess.run([find_ccx(ccx), name], cwd=folder, capture_output=True, text=True,
+                           timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        raise CcxError(f"CalculiX did not finish within {timeout} s")
+    out = (r.stdout or "") + (r.stderr or "")
+    with open(os.path.join(folder, name + ".log"), "w") as fh:
+        fh.write(out)
+    low = out.lower()
+    dat = os.path.join(folder, name + ".dat")
+    problems = []
+    if r.returncode != 0:
+        problems.append(f"exit code {r.returncode}")
+    if "*error" in low:
+        problems.append("CalculiX reported an error: " + out[low.index("*error"):][:400].strip())
+    if "singular" in low or "zero pivot" in low:
+        problems.append("singular matrix: a part is not connected to the support")
+    if "job finished" not in low:
+        problems.append("no 'Job finished' message")
+    if not os.path.exists(dat) or os.path.getsize(dat) == 0:
+        problems.append("no results (.dat) file written")
+    if problems:
+        raise CcxError(" | ".join(problems) + f"  (full output in {name}.log)")
+    return dat
+ 

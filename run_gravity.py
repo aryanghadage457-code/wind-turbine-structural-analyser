@@ -10,7 +10,7 @@ from solver.ccx_writer import write_inp, default_ref_nodes
 from solver.ccx_runner import run_ccx
 from solver import ccx_reader as R
 from pathlib import Path
-
+from tools.head_stiffness_sweep import sweep
 
 def build_full_mesh():
     from geometry.default_generator import load_params, build_default
@@ -110,11 +110,20 @@ if __name__ == "__main__":
             f"mass = {ref['mass_kg']} kg, "
             f"COM = {ref['point']}"
         )
-
+    sweep(    
+        mesh,
+        thickness,
+        S,
+        params,
+        factors=(1, 10, 100, 1000),
+        ref_nodes=ref_nodes,
+        ccx=r"C:\calculix\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
+    )
     inp = write_inp(
         "out/G.inp", mesh, thickness, S,
         case="G",
-        ref_nodes=ref_nodes
+        ref_nodes=ref_nodes,
+        stiff_groups={"Nacelle": 100, "Hub": 100}
     )
 
     dat = run_ccx(

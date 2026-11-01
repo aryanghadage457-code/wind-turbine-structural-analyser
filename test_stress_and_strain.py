@@ -1,9 +1,9 @@
 """
 Tests for StressAndStrain.py (Member 3).   Run from the repository root:
 
-    python -m unittest tests.test_stress_and_strain -v        (stdlib only)
-    python tests/test_stress_and_strain.py                    (same)
-    pytest tests/test_stress_and_strain.py                    (if pytest is installed)
+    python -m unittest test_stress_and_strain -v              (stdlib only; Excel tests need openpyxl)
+    python test_stress_and_strain.py                          (same)
+    pytest test_stress_and_strain.py                          (if pytest is installed)
 
 Tests that need Member 2's files (out/res_G.pkl, out/G.inp, out/full_mesh.pkl) are SKIPPED, not failed,
 when those files are absent. Wind data used here is either a zero placeholder or SYNTHETIC TEST DATA.
@@ -17,7 +17,9 @@ import unittest
 
 import numpy as np
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# repository root = the folder holding contracts.py (this file may sit in the root or in tests/)
+ROOT = _HERE if os.path.isfile(os.path.join(_HERE, "contracts.py")) else os.path.dirname(_HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
@@ -553,6 +555,304 @@ PART_A, PART_B
     def test_missing_file(self):
         with self.assertRaises(FileNotFoundError):
             SS.read_inp_element_properties("/nonexistent/file.inp", 5)
+
+
+# =============================================================================================
+# Element-wise Excel export
+# =============================================================================================
+import re                                                                      # noqa: E402
+import shutil                                                                  # noqa: E402
+
+try:
+    import openpyxl
+except ImportError:                                                            # pragma: no cover
+    openpyxl = None
+have_xlsx = unittest.skipIf(openpyxl is None, "openpyxl not installed (pip install openpyxl)")
+GOLDEN = os.path.join(ROOT, "test_data", "report_zero_wind_GOLDEN.txt")
+PROTECTED = [GRAV_PKL, INP, DAT, MESH_PKL]
+
+
+_WB_CACHE = {}
+
+
+def _read_sheet(path, sheet):
+    """(headers, rows, worksheet) of one worksheet, numbers as stored in the file (workbook loaded once)."""
+    if path not in _WB_CACHE:
+        _WB_CACHE[path] = openpyxl.load_workbook(path)
+    ws = _WB_CACHE[path][sheet]
+    it = ws.iter_rows(values_only=True)
+    headers = list(next(it))
+    rows = [list(r) for r in it]
+    return headers, rows, ws
+
+
+def _col(headers, rows, startswith):
+    j = [i for i, h in enumerate(headers) if h.startswith(startswith)]
+    assert len(j) == 1, (startswith, [headers[i] for i in j])
+    return np.array([r[j[0]] for r in rows], dtype=float)
+
+
+@have_xlsx
+@real
+class TestElementExportRealData(unittest.TestCase):
+    """Export from the ACTUAL gravity result + zero wind (and synthetic wind for the combined path)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.g, cls.mat, cls.mesh = _real()
+        cls.sums_before = {p: _sha(p) for p in PROTECTED if os.path.isfile(p)}
+        cls.mtimes_before = {p: os.path.getmtime(p) for p in cls.sums_before}
+        cls.tmp = tempfile.mkdtemp()
+        cls.res = SS.calculate_stress_and_strain(cls.g, SS.make_zero_wind_result(cls.g), 0.0, cls.mat, mesh=cls.mesh)
+        cls.paths = SS.export_element_results(cls.res, cls.tmp, mesh=cls.mesh)
+        cls.n = cls.g.stress_outer.shape[0]
+        cls.S = {s: _read_sheet(cls.paths["stress"], SS.SHEET_NAMES[s]) for s in SS.SURFACES}
+        cls.E = {s: _read_sheet(cls.paths["strain"], SS.SHEET_NAMES[s]) for s in SS.SURFACES}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    # 1 + 2 -------------------------------------------------------------------------------
+    def test01_all_elements_in_stress_file(self):
+        for surf in SS.SURFACES:
+            h, rows, _ = self.S[surf]
+            self.assertEqual(len(rows), self.n)
+            self.assertEqual([r[0] for r in rows], list(range(self.n)))        # all indices, in order, no gaps
+
+    def test02_all_elements_in_strain_file(self):
+        for surf in SS.SURFACES:
+            h, rows, _ = self.E[surf]
+            self.assertEqual(len(rows), self.n)
+            self.assertEqual([r[0] for r in rows], list(range(self.n)))
+
+    def test_workbook_structure(self):
+        for key in ("stress", "strain"):
+            wb = openpyxl.load_workbook(self.paths[key])
+            self.assertEqual(wb.sheetnames[:2], ["Outer_Surface", "Inner_Surface"])
+        self.assertEqual(os.path.basename(self.paths["stress"]), "element_stress_results.xlsx")
+        self.assertEqual(os.path.basename(self.paths["strain"]), "element_strain_results.xlsx")
+
+    def test_header_frozen_and_filtered(self):
+        for tbl in (self.S, self.E):
+            for surf in SS.SURFACES:
+                ws = tbl[surf][2]
+                self.assertEqual(ws.freeze_panes, "D2")                       # header row (and ID columns) frozen
+                self.assertTrue(ws.auto_filter.ref.startswith("A1:"))
+                self.assertTrue(ws.auto_filter.ref.endswith(str(self.n + 1)))
+
+    # 3 -----------------------------------------------------------------------------------
+    def test03_element_ids_match_original_mesh(self):
+        ids_inp = set()
+        in_elem = False
+        with open(INP) as fh:                                                  # element ids as CalculiX saw them
+            for line in fh:
+                t = line.strip()
+                if t.startswith("*"):
+                    in_elem = t.upper().startswith("*ELEMENT")
+                elif in_elem and t and not t.startswith("**"):
+                    ids_inp.add(int(t.split(",")[0]))
+        for tbl in (self.S, self.E):
+            for surf in SS.SURFACES:
+                h, rows, _ = tbl[surf]
+                self.assertEqual(h[:3], SS._ID_HEADERS)
+                ccx = [r[1] for r in rows]
+                self.assertEqual(set(ccx), ids_inp)
+                self.assertEqual(len(set(ccx)), self.n)                         # unique
+                self.assertEqual(ccx, [r[0] + 1 for r in rows])
+                if self.mesh is not None:
+                    self.assertEqual(self.mesh.n_elems, len(rows))
+                    self.assertEqual([r[2] for r in rows],
+                                     [self.mesh.group_names[g] for g in self.mesh.elem_group])
+                    self.assertNotIn(SS.NO_GROUP_LABEL, {r[2] for r in rows})
+
+    # 4 -----------------------------------------------------------------------------------
+    def test04_outer_and_inner_remain_separate(self):
+        so, si = self.S["outer"], self.S["inner"]
+        vo, vi = _col(so[0], so[1], "von Mises"), _col(si[0], si[1], "von Mises")
+        self.assertFalse(np.allclose(vo, vi))
+        # each sheet equals ITS OWN surface's gravity stress (zero wind) and not the other
+        np.testing.assert_allclose(_col(so[0], so[1], "σxx") * 1e6, self.g.stress_outer[:, 0], rtol=1e-12, atol=1e-6)
+        np.testing.assert_allclose(_col(si[0], si[1], "σxx") * 1e6, self.g.stress_inner[:, 0], rtol=1e-12, atol=1e-6)
+        self.assertFalse(np.allclose(self.g.stress_outer[:, 0], self.g.stress_inner[:, 0]))
+        eo, ei = self.E["outer"], self.E["inner"]
+        self.assertFalse(np.allclose(_col(eo[0], eo[1], "Equivalent"), _col(ei[0], ei[1], "Equivalent")))
+        # not an average
+        avg = 0.5 * (self.res.outer.von_mises + self.res.inner.von_mises) / 1e6
+        self.assertFalse(np.allclose(vo, avg)); self.assertFalse(np.allclose(vi, avg))
+
+    # 5 + 7 -------------------------------------------------------------------------------
+    def test05_07_stress_values_match_calculation_and_are_MPa(self):
+        for surf in SS.SURFACES:
+            h, rows, _ = self.S[surf]
+            r = self.res.surface(surf)
+            chk = {"σxx": r.stress[:, 0], "σyy": r.stress[:, 1], "σzz": r.stress[:, 2],
+                   "τxy": r.stress[:, 3], "τxz": r.stress[:, 4], "τyz": r.stress[:, 5],
+                   "σ1": r.principal[:, 0], "σ2": r.principal[:, 1], "σ3": r.principal[:, 2],
+                   "von Mises": r.von_mises, "Max shear": r.max_shear}
+            self.assertEqual(len(h), 3 + len(chk))
+            for key, pa in chk.items():
+                got = _col(h, rows, key)
+                np.testing.assert_allclose(got, pa / 1.0e6, rtol=1e-13, atol=1e-12, err_msg=f"{surf} {key}")   # Pa -> MPa
+                np.testing.assert_allclose(got * 1e6, pa, rtol=1e-12, atol=1e-6)
+            self.assertTrue(all(re.search(r"\[MPa\]", x) for x in h[3:]))
+        # known magnitude: the critical element's von Mises is 1884.33 MPa (not 1.88e9, not 1.88e3 * 1e-6)
+        o = self.S["outer"]
+        i = self.res.critical.element_index
+        self.assertAlmostEqual(_col(o[0], o[1], "von Mises")[i], 1884.33, delta=0.01)
+        # ordering sanity of principal stresses and tau_max definition
+        s1, s2, s3 = (_col(o[0], o[1], k) for k in ("σ1", "σ2", "σ3"))
+        self.assertTrue(np.all(s1 >= s2) and np.all(s2 >= s3))
+        np.testing.assert_allclose(_col(o[0], o[1], "Max shear"), (s1 - s3) / 2, rtol=1e-12, atol=1e-9)
+        # Member 2's own von Mises function agrees with the exported values
+        from solver import ccx_reader as R
+        np.testing.assert_allclose(_col(o[0], o[1], "von Mises") * 1e6, R.von_mises(self.g.stress_outer), rtol=1e-9, atol=1.0)
+
+    # 6 + 8 -------------------------------------------------------------------------------
+    def test06_08_strain_values_match_calculation_and_are_unscaled(self):
+        for surf in SS.SURFACES:
+            h, rows, _ = self.E[surf]
+            r = self.res.surface(surf)
+            chk = {"εxx": r.strain[:, 0], "εyy": r.strain[:, 1], "εzz": r.strain[:, 2],
+                   "εxy": r.strain[:, 3], "εxz": r.strain[:, 4], "εyz": r.strain[:, 5],
+                   "γxy": r.engineering_shear[:, 0], "γxz": r.engineering_shear[:, 1], "γyz": r.engineering_shear[:, 2],
+                   "ε1": r.principal_strain[:, 0], "ε2": r.principal_strain[:, 1], "ε3": r.principal_strain[:, 2],
+                   "Equivalent": r.equivalent_strain, "Max shear strain": r.max_shear_strain}
+            self.assertEqual(len(h), 3 + len(chk))
+            for key, ref in chk.items():
+                np.testing.assert_allclose(_col(h, rows, key), ref, rtol=1e-13, atol=0.0, err_msg=f"{surf} {key}")
+            # independent route: Hooke's law applied to the exported stresses (MPa -> Pa) with the inp material
+            sh, sr, _ = self.S[surf]
+            sig = np.stack([_col(sh, sr, k) for k in ("σxx", "σyy", "σzz", "τxy", "τxz", "τyz")], axis=1) * 1e6
+            eps = SS.strain_from_stress(sig, self.mat.E, self.mat.nu, "plane_stress")
+            np.testing.assert_allclose(_col(h, rows, "εxx"), eps[:, 0], rtol=1e-9, atol=1e-15)
+            self.assertFalse(any("MPa" in x for x in h[3:]))
+        # no stray scaling: tensorial vs engineering shear, and equivalent strain ~ vm/E for the outer surface
+        h, rows, _ = self.E["outer"]
+        np.testing.assert_allclose(_col(h, rows, "γxy"), 2 * _col(h, rows, "εxy"), rtol=1e-13, atol=0)
+        self.assertAlmostEqual(_col(h, rows, "Equivalent")[self.res.critical.element_index], 0.011322, delta=1e-6)
+        self.assertLess(np.abs(_col(h, rows, "ε1")).max(), 0.1)                 # strains are O(1e-2), not %, not x1e6
+        self.assertIn("ENGINEERING", [x for x in h if x.startswith("γxy")][0])
+        self.assertIn("TENSORIAL", [x for x in h if x.startswith("εxy")][0])
+
+    # 9 -----------------------------------------------------------------------------------
+    def test09_terminal_summary_unchanged(self):
+        with open(GOLDEN) as fh:
+            golden = fh.read()
+        self.assertEqual(self.res.report(), golden)
+        # exporting must not alter the report either
+        after = SS.calculate_stress_and_strain(self.g, SS.make_zero_wind_result(self.g), 0.0, self.mat, mesh=self.mesh)
+        SS.export_element_results(after, self.tmp, mesh=self.mesh)
+        self.assertEqual(after.report(), golden)
+        for key in ("von_mises", "sigma1_max (tension)", "sigma3_min (compression)", "max_shear", "equivalent_strain",
+                    "max_shear_strain", "eps1_max (tension)", "eps3_min (compression)"):
+            self.assertIn(key, self.res.report())
+
+    def test09b_cli_prints_summary_and_writes_files(self):
+        import subprocess
+        out = os.path.join(self.tmp, "cli")
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "StressAndStrain.py"), "--gravity", GRAV_PKL, "--inp", INP,
+                            "--mesh", MESH_PKL, "--export-dir", out], capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(p.stdout.startswith(golden := open(GOLDEN).read()))
+        self.assertIn("element_stress_results.xlsx", p.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(out, "element_stress_results.xlsx")))
+        self.assertTrue(os.path.isfile(os.path.join(out, "element_strain_results.xlsx")))
+        p2 = subprocess.run([sys.executable, os.path.join(ROOT, "StressAndStrain.py"), "--gravity", GRAV_PKL, "--inp", INP,
+                             "--mesh", MESH_PKL, "--export-dir", os.path.join(self.tmp, "none"), "--no-export"],
+                            capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(p2.returncode, 0, p2.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "none")))
+        self.assertEqual(p2.stdout.rstrip("\n"), golden)
+
+    # 10 ----------------------------------------------------------------------------------
+    def test10_combined_loading_export(self):
+        w = make_synthetic_wind_result(self.g, v_ref=10.0)
+        res = SS.calculate_stress_and_strain(self.g, w, 7.0, self.mat, mesh=self.mesh)
+        paths = SS.export_element_results(res, os.path.join(self.tmp, "combined"), mesh=self.mesh)
+        s = 0.49
+        for surf, gs, ws_ in (("outer", self.g.stress_outer, w.stress_outer), ("inner", self.g.stress_inner, w.stress_inner)):
+            h, rows, _ = _read_sheet(paths["stress"], SS.SHEET_NAMES[surf])
+            tot = gs + s * ws_
+            np.testing.assert_allclose(_col(h, rows, "σxx") * 1e6, tot[:, 0], rtol=1e-12, atol=1e-6)
+            np.testing.assert_allclose(_col(h, rows, "τyz") * 1e6, tot[:, 5], rtol=1e-12, atol=1e-6)
+        h, rows, _ = _read_sheet(paths["stress"], "Outer_Surface")
+        np.testing.assert_allclose(_col(h, rows, "von Mises"), res.outer.von_mises / 1e6, rtol=1e-13)
+
+    # 11 ----------------------------------------------------------------------------------
+    def test11_member2_files_not_modified(self):
+        SS.export_element_results(self.res, os.path.join(self.tmp, "again"), mesh=self.mesh)
+        for p, h in self.sums_before.items():
+            self.assertEqual(_sha(p), h, f"{p} changed")
+            self.assertEqual(os.path.getmtime(p), self.mtimes_before[p])
+
+    def test_refuses_to_overwrite_protected_files(self):
+        for name in ("res_G.pkl", "G.inp", "G.dat", "full_mesh.pkl"):
+            with self.assertRaises(ValueError):
+                SS.export_element_results(self.res, self.tmp, mesh=self.mesh, stress_filename=name)
+        with self.assertRaises(ValueError):
+            SS.export_element_results(self.res, self.tmp, mesh=self.mesh, strain_filename="x.csv")
+
+    def test_no_mesh_labels_group_explicitly(self):
+        res = SS.calculate_stress_and_strain(self.g, SS.make_zero_wind_result(self.g), 0.0, self.mat)
+        h, rows = SS.element_stress_table(res, "outer", None)
+        self.assertEqual(len(rows), self.n)
+        self.assertEqual({r[2] for r in rows}, {SS.NO_GROUP_LABEL})
+        with self.assertRaises(ValueError):                                     # mesh of wrong size is rejected
+            SS.element_identity_columns(self.n + 1, self.mesh)
+
+    def test_numbers_are_finite_and_nothing_silently_zeroed(self):
+        for tbl in (self.S, self.E):
+            for surf in SS.SURFACES:
+                h, rows, _ = tbl[surf]
+                vals = np.array([r[3:] for r in rows], dtype=float)
+                self.assertTrue(np.isfinite(vals).all())
+                self.assertGreater(np.count_nonzero(vals), 0.9 * vals.size)     # real data, not zero-filled
+
+
+@have_xlsx
+class TestElementExportEdgeCases(unittest.TestCase):
+    MAT = {"E": 210e9, "nu": 0.3}
+
+    def test_works_for_any_mesh_size_and_inner_unavailable_is_reported(self):
+        n = 1234
+        rng = np.random.default_rng(1)
+        sg = rng.normal(0, 50e6, (n, 6))
+        g = _tiny("G", sg, inner=None, n_nodes=7)
+        w = _tiny("W", np.zeros_like(sg), inner=None, v_ref=10.0, n_nodes=7)
+        res = SS.calculate_stress_and_strain(g, w, 0.0, self.MAT)
+        with tempfile.TemporaryDirectory() as d:
+            paths = SS.export_element_results(res, d)
+            for key in ("stress", "strain"):
+                wb = openpyxl.load_workbook(paths[key])
+                self.assertEqual(wb.sheetnames[:2], ["Outer_Surface", "Inner_Surface"])
+                self.assertEqual(wb["Outer_Surface"].max_row, n + 1)
+                inner = wb["Inner_Surface"]
+                self.assertEqual(inner.max_row, 1)                              # no artificial rows
+                self.assertIn("NOT AVAILABLE", inner["A1"].value)
+            with self.assertRaises(ValueError):
+                SS.element_stress_table(res, "inner")
+
+    def test_non_finite_value_is_marked_not_zeroed(self):
+        g = _tiny("G", [[1e6, 2e6, 0, 1e5, 0, 0]])
+        res = SS.calculate_stress_and_strain(g, _tiny("W", np.zeros((1, 6)), v_ref=1.0), 0.0, self.MAT)
+        res.outer.von_mises[0] = np.nan
+        h, rows = SS.element_stress_table(res, "outer")
+        j = [i for i, x in enumerate(h) if x.startswith("von Mises")][0]
+        self.assertEqual(rows[0][j], SS.MISSING_LABEL)
+
+    def test_hand_calculated_row(self):
+        """Uniaxial 100 MPa on element 0 -> exact exported numbers."""
+        g = _tiny("G", [[100e6, 0, 0, 0, 0, 0]])
+        res = SS.calculate_stress_and_strain(g, _tiny("W", np.zeros((1, 6)), v_ref=1.0), 0.0, {"E": 200e9, "nu": 0.3})
+        h, rows = SS.element_stress_table(res, "outer")
+        self.assertEqual(rows[0][:2], [0, 1])
+        self.assertAlmostEqual(rows[0][3], 100.0, places=9)                     # sigma_xx [MPa]
+        self.assertAlmostEqual(rows[0][h.index("von Mises [MPa]")], 100.0, places=9)
+        self.assertAlmostEqual(rows[0][h.index("Max shear stress τmax=(σ1-σ3)/2 [MPa]")], 50.0, places=9)
+        h, rows = SS.element_strain_table(res, "outer")
+        self.assertAlmostEqual(rows[0][3], 5.0e-4, places=15)                   # eps_xx = 100e6/200e9
+        self.assertAlmostEqual(rows[0][4], -1.5e-4, places=15)
 
 
 class TestSyntheticGenerator(unittest.TestCase):

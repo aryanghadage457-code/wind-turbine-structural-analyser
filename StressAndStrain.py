@@ -59,6 +59,11 @@ Quick use:
     print(res.report())
 Future (real wind from Member 2) - same call, nothing else changes:
     res = calculate_stress_and_strain(g, wind_result_W, wind_speed=25.0, material=mat)
+
+Element-wise Excel export (every element, outer and inner on separate sheets; needs `pip install openpyxl`):
+    paths = export_element_results(res, "results", mesh=mesh)    # element_stress_results.xlsx + element_strain_results.xlsx
+Command line (prints the summary AND writes both workbooks; --no-export skips the files):
+    python StressAndStrain.py --wind zero --speed 0
 """
 from __future__ import annotations
 
@@ -656,6 +661,220 @@ def principal_directions_global(dirs_local: np.ndarray, axes: np.ndarray) -> np.
 
 
 # ----------------------------------------------------------------------------
+# Element-wise export (Excel)
+# ----------------------------------------------------------------------------
+# Pure presentation layer: every number is READ from the SurfaceResult arrays that
+# calculate_stress_and_strain() already produced (no formula is repeated here). The only arithmetic is the
+# unit conversion Pa -> MPa for stress; strain is exported exactly as computed (dimensionless, unscaled).
+PA_PER_MPA = 1.0e6
+STRESS_FILENAME = "element_stress_results.xlsx"
+STRAIN_FILENAME = "element_strain_results.xlsx"
+SHEET_NAMES = {"outer": "Outer_Surface", "inner": "Inner_Surface"}
+NOTES_SHEET = "Notes"
+NO_GROUP_LABEL = "N/A (mesh not provided)"
+MISSING_LABEL = "N/A"                    # written instead of a number when a value is not finite (never 0)
+PROTECTED_FILENAMES = frozenset({"res_G.pkl", "G.inp", "G.dat", "full_mesh.pkl"})   # Member 2's files
+_ID_HEADERS = ["Element index (0-based, mesh row)", "CalculiX element ID", "Component/group"]
+
+
+def _stress_columns(s: SurfaceResult):
+    """[(header, (E,) array in export units)] for the stress workbook. Pa -> MPa happens here only."""
+    M = PA_PER_MPA
+    sg = s.stress
+    cols = [
+        ("σxx normal [MPa]", sg[:, _IDX["xx"]] / M),
+        ("σyy normal [MPa]", sg[:, _IDX["yy"]] / M),
+        ("σzz normal (through-thickness) [MPa]", sg[:, _IDX["zz"]] / M),
+        ("τxy shear [MPa]", sg[:, _IDX["xy"]] / M),
+        ("τxz shear (transverse) [MPa]", sg[:, _IDX["xz"]] / M),
+        ("τyz shear (transverse) [MPa]", sg[:, _IDX["yz"]] / M),
+        ("σ1 max principal [MPa]", s.principal[:, 0] / M),
+        ("σ2 intermediate principal [MPa]", s.principal[:, 1] / M),
+        ("σ3 min principal [MPa]", s.principal[:, 2] / M),
+        ("von Mises [MPa]", s.von_mises / M),
+        ("Max shear stress τmax=(σ1-σ3)/2 [MPa]", s.max_shear / M),
+    ]
+    return cols
+
+
+def _strain_columns(s: SurfaceResult):
+    """[(header, (E,) array)] for the strain workbook. Dimensionless; NOT rescaled in any way."""
+    e, gam, pe = s.strain, s.engineering_shear, s.principal_strain
+    return [
+        ("εxx normal [-]", e[:, _IDX["xx"]]),
+        ("εyy normal [-]", e[:, _IDX["yy"]]),
+        ("εzz normal [-]", e[:, _IDX["zz"]]),
+        ("εxy TENSORIAL shear [-] (= γxy/2)", e[:, _IDX["xy"]]),
+        ("εxz TENSORIAL shear [-] (= γxz/2)", e[:, _IDX["xz"]]),
+        ("εyz TENSORIAL shear [-] (= γyz/2)", e[:, _IDX["yz"]]),
+        ("γxy ENGINEERING shear [-] (= 2 εxy)", gam[:, 0]),
+        ("γxz ENGINEERING shear [-] (= 2 εxz)", gam[:, 1]),
+        ("γyz ENGINEERING shear [-] (= 2 εyz)", gam[:, 2]),
+        ("ε1 max principal [-]", pe[:, 0]),
+        ("ε2 intermediate principal [-]", pe[:, 1]),
+        ("ε3 min principal [-]", pe[:, 2]),
+        ("Equivalent strain (von Mises) [-]", s.equivalent_strain),
+        ("Max shear strain γmax=ε1-ε3 ENGINEERING [-]", s.max_shear_strain),
+    ]
+
+
+def element_identity_columns(n_elems: int, mesh: Optional[Mesh] = None):
+    """(element index, CalculiX id, group label) for every element, in mesh order.
+    CalculiX id = index + 1 (the convention of ccx_writer / the rest of this module). Without a mesh the
+    group is labelled explicitly as unavailable (never left blank, never guessed)."""
+    if mesh is not None and mesh.n_elems != n_elems:
+        raise ValueError(f"mesh has {mesh.n_elems} elements but the results have {n_elems}")
+    idx = np.arange(n_elems, dtype=int)
+    if mesh is None:
+        groups = [NO_GROUP_LABEL] * n_elems
+    else:
+        groups = [str(mesh.group_names[int(g)]) for g in mesh.elem_group]
+    return idx, idx + 1, groups
+
+
+def element_stress_table(result: StressStrainResult, surface: str, mesh: Optional[Mesh] = None):
+    """(headers, rows) for one surface. rows is a list of E lists, mesh order. Raises if the surface is absent."""
+    s = result.surface(surface)
+    if s is None:
+        raise ValueError(f"no '{surface}' surface results available")
+    return _table(s, _stress_columns(s), result.n_elems, mesh)
+
+
+def element_strain_table(result: StressStrainResult, surface: str, mesh: Optional[Mesh] = None):
+    """(headers, rows) for one surface of the strain workbook (see element_stress_table)."""
+    s = result.surface(surface)
+    if s is None:
+        raise ValueError(f"no '{surface}' surface results available")
+    return _table(s, _strain_columns(s), result.n_elems, mesh)
+
+
+def _table(s: SurfaceResult, cols, n_elems: int, mesh: Optional[Mesh]):
+    idx, ccx, groups = element_identity_columns(n_elems, mesh)
+    headers = _ID_HEADERS + [h for h, _ in cols]
+    data = [np.asarray(a, float) for _, a in cols]
+    rows = []
+    for i in range(n_elems):
+        row = [int(idx[i]), int(ccx[i]), groups[i]]
+        for a in data:
+            v = float(a[i])
+            row.append(v if np.isfinite(v) else MISSING_LABEL)       # unavailable stays visible, never 0
+        rows.append(row)
+    return headers, rows
+
+
+def _check_output_path(path: str) -> None:
+    if os.path.basename(path) in PROTECTED_FILENAMES:
+        raise ValueError(f"refusing to write '{path}': it is one of Member 2's protected result files")
+    if not path.lower().endswith(".xlsx"):
+        raise ValueError(f"export path must end in .xlsx, got '{path}'")
+
+
+def _import_openpyxl():
+    try:
+        import openpyxl
+        return openpyxl
+    except ImportError as exc:                                      # pragma: no cover - environment dependent
+        raise ImportError("Excel export needs openpyxl. Install it with:  pip install openpyxl") from exc
+
+
+def _write_sheet(ws, headers, rows, number_format: str, bold, fill):
+    from openpyxl.styles import Alignment
+    from openpyxl.utils import get_column_letter
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    for c in ws[1]:
+        c.font, c.fill = bold, fill
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+    ws.row_dimensions[1].height = 48
+    for j in range(len(_ID_HEADERS) + 1, len(headers) + 1):         # numeric columns
+        for (cell,) in ws.iter_rows(min_row=2, min_col=j, max_col=j):
+            if not isinstance(cell.value, str):
+                cell.number_format = number_format
+    for j, h in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(j)].width = 14 if j == 1 else (18 if j <= 3 else 22)
+    ws.freeze_panes = "D2"                                          # header row + the three ID columns
+    ws.auto_filter.ref = ws.dimensions
+
+
+def _write_workbook(path: str, kind: str, result: StressStrainResult, mesh: Optional[Mesh], note_lines: List[str]):
+    openpyxl = _import_openpyxl()
+    from openpyxl.styles import Font, PatternFill
+    bold, fill = Font(bold=True), PatternFill("solid", fgColor="DDEBF7")
+    table = element_stress_table if kind == "stress" else element_strain_table
+    fmt = "0.000" if kind == "stress" else "0.000000E+00"
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for surf in SURFACES:
+        ws = wb.create_sheet(SHEET_NAMES[surf])
+        if result.surface(surf) is None:
+            ws.append([f"{surf.capitalize()}-surface results are NOT AVAILABLE: stress_{surf} is None in the "
+                       f"input SolveResult. No values were estimated, copied from the other surface or set to zero."])
+            ws["A1"].font = Font(bold=True, color="C00000")
+            continue
+        headers, rows = table(result, surf, mesh)
+        _write_sheet(ws, headers, rows, fmt, bold, fill)
+    wn = wb.create_sheet(NOTES_SHEET)
+    for line in note_lines:
+        wn.append([line])
+    wn.column_dimensions["A"].width = 140
+    wn["A1"].font = bold
+    wb.save(path)
+
+
+def _export_notes(kind: str, result: StressStrainResult) -> List[str]:
+    common = [
+        f"Element-wise {kind} results - sheets Outer_Surface / Inner_Surface are kept separate (never averaged).",
+        f"Elements: {result.n_elems}; rows are in mesh order (row 2 = element index 0 = CalculiX id 1).",
+        f"Loading: sigma = sigma_G + (v/v_ref)^2 sigma_W with v = {result.wind_speed:g} m/s, "
+        f"(v/v_ref)^2 = {result.wind_scale:g}; wind dataset: {result.wind_label}.",
+        f"Material: {result.material_source}. Strain model: {result.strain_model}.",
+        "Tension positive. Components are in each element's LOCAL shell axes (axis 3 = element normal).",
+        "'outer' = +normal side of the element, 'inner' = the other side. Values are extrapolated surface values.",
+        "N/A in a cell means the value is unavailable; it is never replaced by 0.",
+    ]
+    if kind == "stress":
+        return common + [
+            "Units: all stresses in MPa (Pa / 1e6). tau_xy, tau_xz, tau_yz are TENSOR shear components sigma_ij.",
+            "sigma1 >= sigma2 >= sigma3 (tension positive). von Mises and max shear use all six stored components.",
+            "Max shear stress = (sigma1 - sigma3) / 2.",
+        ]
+    return common + [
+        "Units: strains are dimensionless (m/m), exported unscaled.",
+        "eps_xy, eps_xz, eps_yz are TENSORIAL shear strains; gamma_xy, gamma_xz, gamma_yz are ENGINEERING shear strains "
+        "(gamma = 2 eps_ij). Both are provided.",
+        "Principal strains use the tensorial strain tensor, e1 >= e2 >= e3. Max shear strain = e1 - e3 "
+        "(ENGINEERING value = 2 x tensorial maximum shear).",
+        "Equivalent strain = sqrt(0.5[(e1-e2)^2+(e2-e3)^2+(e3-e1)^2]) / (1+nu).",
+        ("plane_stress: sigma_zz is NOT used in Hooke's law (shell assumption), eps_zz = -nu/E (sxx+syy); transverse "
+         "shears are kept." if result.strain_model == "plane_stress"
+         else "full_3d: all six stress components enter Hooke's law."),
+    ]
+
+
+def export_element_results(result: StressStrainResult, out_dir: str = "results", mesh: Optional[Mesh] = None,
+                           stress_filename: str = STRESS_FILENAME, strain_filename: str = STRAIN_FILENAME) -> Dict[str, str]:
+    """Write every element's stress and strain, outer and inner surface on separate worksheets, to two files:
+
+        <out_dir>/element_stress_results.xlsx   sheets Outer_Surface, Inner_Surface (+ Notes)
+        <out_dir>/element_strain_results.xlsx   sheets Outer_Surface, Inner_Surface (+ Notes)
+
+    If a surface is unavailable its sheet states so (no artificial values). Requires openpyxl
+    (pip install openpyxl). Refuses to write over Member 2's result files. Returns {'stress': path, 'strain': path}."""
+    stress_path = os.path.join(out_dir, stress_filename)
+    strain_path = os.path.join(out_dir, strain_filename)
+    for p in (stress_path, strain_path):
+        _check_output_path(p)
+    if os.path.abspath(stress_path) == os.path.abspath(strain_path):
+        raise ValueError("stress and strain files must have different names")
+    _import_openpyxl()
+    os.makedirs(out_dir, exist_ok=True)
+    _write_workbook(stress_path, "stress", result, mesh, _export_notes("stress", result))
+    _write_workbook(strain_path, "strain", result, mesh, _export_notes("strain", result))
+    return {"stress": stress_path, "strain": strain_path}
+
+
+# ----------------------------------------------------------------------------
 # Command line
 # ----------------------------------------------------------------------------
 def _main():
@@ -668,6 +887,9 @@ def _main():
     ap.add_argument("--speed", type=float, default=0.0, help="wind speed v in m/s")
     ap.add_argument("--strain-model", default="plane_stress", choices=STRAIN_MODELS)
     ap.add_argument("--save-npz", default=None, help="write the outer/inner arrays to this .npz")
+    ap.add_argument("--export-dir", default="results",
+                    help="folder for element_stress_results.xlsx / element_strain_results.xlsx (default: results)")
+    ap.add_argument("--no-export", action="store_true", help="print the summary only; do not write the Excel files")
     a = ap.parse_args()
 
     g = load_solve_result(a.gravity)
@@ -682,7 +904,12 @@ def _main():
     else:
         w = load_solve_result(a.wind)
     res = calculate_stress_and_strain(g, w, a.speed, mat, strain_model=a.strain_model, mesh=mesh)
-    print(res.report())
+    print(res.report())                                   # unchanged max/min summary
+    if not a.no_export:                                   # ...AND the complete per-element Excel files
+        paths = export_element_results(res, a.export_dir, mesh=mesh)
+        print(f"\nElement-wise results ({res.n_elems} elements, "
+              f"{'outer + inner' if res.inner is not None else 'outer only - inner unavailable'}):")
+        print(f"  stress : {paths['stress']}\n  strain : {paths['strain']}")
     if a.save_npz:
         arrays = {f"{s}_{k}": v for s in SURFACES if res.surface(s) is not None for k, v in res.as_dict(s).items()}
         np.savez_compressed(a.save_npz, **arrays)

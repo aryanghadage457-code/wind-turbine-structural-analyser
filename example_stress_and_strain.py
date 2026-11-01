@@ -6,6 +6,7 @@ example_stress_and_strain.py - how to use StressAndStrain.py.   Run from the rep
 Example 1: ACTUAL gravity result (out/res_G.pkl) + zero wind, v = 0   -> gravity-only numbers.
 Example 2: ACTUAL gravity result + SYNTHETIC wind (test data), v = 7 m/s -> exercises the wind path.
 Example 3: what changes when Member 2's real wind result is ready (nothing in StressAndStrain.py).
+Example 4: export EVERY element's stress and strain (outer + inner) to Excel (needs: pip install openpyxl).
 """
 import numpy as np
 
@@ -44,3 +45,7 @@ print(f"\nmax equivalent strain: plane_stress {res7.extremes['equivalent_strain'
 # ---- Example 3: real wind from Member 2 later -------------------------------------------------------
 #   wind = SS.load_solve_result("out/res_W.pkl")        # a SolveResult with case='W' and v_ref set by the solver
 #   res  = SS.calculate_stress_and_strain(gravity, wind, wind_speed=25.0, material=material, mesh=mesh)
+# ---- Example 4: element-wise Excel export (the max/min summary above is still printed) ------------------
+#   Gravity + zero wind -> results/element_stress_results.xlsx and results/element_strain_results.xlsx
+paths = SS.export_element_results(res0, "results", mesh=mesh)
+print(f"\nExported {res0.n_elems} elements (outer + inner):\n  {paths['stress']}\n  {paths['strain']}")

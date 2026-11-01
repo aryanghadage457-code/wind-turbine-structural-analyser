@@ -9,7 +9,7 @@ json_path = args[0] if args else "data/default_turbine.json"
 out_path = args[1] if len(args) > 1 else "turbine.step"
 
 gmsh.initialize()
-gmsh.option.setNumber("General.Terminal", 0)
+gmsh.option.setString("Geometry.OCCTargetUnit", "M")   # numbers are metres: write the file with true mm values
 
 # 1) build and export
 groups, thickness = build_default(load_params(json_path))

@@ -176,7 +176,7 @@ def show_element_details(original_cell_id, element_id):
 
     update_element_window(details)
     
-    plot_mohr_circles(details)
+    
 
 # Build the PyVista mesh
 grid = build_turbine_mesh(mesh)

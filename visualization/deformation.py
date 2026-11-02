@@ -35,8 +35,8 @@ def apply_deformation(grid, displacements, scale=1.0):
     if not np.all(np.isfinite(displacements)):
         raise ValueError("Displacements contain invalid values.")
 
-    if not np.isfinite(scale) or scale < 0:
-        raise ValueError("Scale must be a finite, non-negative number.")
+    if not np.isscalar(scale) or not np.isfinite(scale) or scale < 0:
+      raise ValueError("Scale must be a finite, non-negative scalar.")
 
     deformed_grid = grid.copy(deep=True)
 

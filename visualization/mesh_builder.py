@@ -22,6 +22,8 @@ def build_turbine_mesh(mesh):
 
     nodes = np.asarray(mesh.nodes, dtype=float)
     elements = np.asarray(mesh.elems, dtype=np.int64)
+    if len(elements) == 0:
+     raise ValueError("Mesh contains no elements.")
 
     if nodes.ndim != 2 or nodes.shape[1] != 3:
         raise ValueError("Expected node coordinates with shape (N, 3).")

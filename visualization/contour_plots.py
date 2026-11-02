@@ -554,7 +554,7 @@ def enable_element_selection(plotter, grid, on_element_selected=None):
         selected["element_id"] = element_id
 
         if on_element_selected is not None:
-            on_element_selected(element_id)
+            on_element_selected(original_cell_id,element_id)
 
         plotter.render()
 

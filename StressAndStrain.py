@@ -1066,17 +1066,22 @@ def _main():
     if not a.no_display:
         display_element_results_in_excel(res, mesh=mesh)
 
-    # Option 3: Save NPZ arrays (if requested)
-    if a.save_npz:
-        arrays = {
-            f"{s}_{k}": v
-            for s in SURFACES
-            if res.surface(s) is not None
-            for k, v in res.as_dict(s).items()
-        }
+    # Option 3: Save updated NPZ arrays automatically
+    arrays = {
+        f"{s}_{k}": v
+        for s in SURFACES
+        if res.surface(s) is not None
+        for k, v in res.as_dict(s).items()
+    }
 
-        np.savez_compressed(a.save_npz, **arrays)
-        print(f"\nSaved {len(arrays)} arrays to {a.save_npz}")
+    os.makedirs("out", exist_ok=True)
+
+    np.savez_compressed(
+        "out/stress_strain_results.npz",
+        **arrays
+    )
+
+    print(f"\nSaved {len(arrays)} arrays to out/stress_strain_results.npz")
 
 
 if __name__ == "__main__":

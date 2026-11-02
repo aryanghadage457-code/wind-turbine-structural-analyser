@@ -39,8 +39,8 @@
     "width": 5.2,
     "height": 4.8,
     "t": 0.02,
-    "tower_ring_outer_radius": 2.5,
-    "tower_ring_t": 0.05
+    "tower_ring_outer_radius": 2.4,
+    "tower_ring_t": 0.03
   },
   "hub": {
     "diameter": 3,

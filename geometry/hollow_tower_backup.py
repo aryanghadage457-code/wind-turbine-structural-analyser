@@ -213,4 +213,3 @@ try:
 
 finally:
     gmsh.finalize()
-

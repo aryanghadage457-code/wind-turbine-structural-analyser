@@ -58,6 +58,9 @@
     ],
     "count": 3,
     "azimuth_deg": 0.0,
+    "leading_edge_align": 1.0,
+    "leading_edge_start_r": 8.3333,
+    "leading_edge_sign": 1,
     "t": 0.02,
     "stations": [
       {

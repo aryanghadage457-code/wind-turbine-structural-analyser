@@ -15,7 +15,8 @@ z_top = sections[-1]["z1"]
 r_top = sections[-1]["d1"] / 2
 disc_area = math.pi * r_top ** 2
 floor_len = nac["y_front"] - nac["y_rear"]
-expected_floor = nac["width"] * floor_len - disc_area
+flat_w = nac["width"] - 2 * nac.get("round", 0.0)
+expected_floor = flat_w * floor_len - disc_area
 
 gmsh.initialize()
 gmsh.option.setNumber("General.Terminal", 0)

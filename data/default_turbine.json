@@ -1,15 +1,50 @@
 {
-  "_note": "Tower, hub and blade stations from NREL 5-MW (NREL/TP-500-38060). Nacelle size and position, wall thicknesses, blade root and tip stations are own assumptions.",
+  "_note": "Tower, hub and blade stations from NREL 5-MW (NREL/TP-500-38060). Nacelle size, position and edge rounding, wall thicknesses, blade root and tip stations are own assumptions.",
   "tower": {
     "sections": [
-      {"z0": 0.0,  "z1": 22.0, "d0": 6.000, "d1": 5.465, "t": 0.026},
-      {"z0": 22.0, "z1": 44.0, "d0": 5.465, "d1": 4.931, "t": 0.024},
-      {"z0": 44.0, "z1": 66.0, "d0": 4.931, "d1": 4.396, "t": 0.022},
-      {"z0": 66.0, "z1": 87.6, "d0": 4.396, "d1": 3.870, "t": 0.020}
+      {
+        "z0": 0.0,
+        "z1": 22.0,
+        "d0": 6.0,
+        "d1": 5.465,
+        "t": 0.026
+      },
+      {
+        "z0": 22.0,
+        "z1": 44.0,
+        "d0": 5.465,
+        "d1": 4.931,
+        "t": 0.024
+      },
+      {
+        "z0": 44.0,
+        "z1": 66.0,
+        "d0": 4.931,
+        "d1": 4.396,
+        "t": 0.022
+      },
+      {
+        "z0": 66.0,
+        "z1": 87.6,
+        "d0": 4.396,
+        "d1": 3.87,
+        "t": 0.02
+      }
     ]
   },
-  "nacelle": {"y_rear": -10.3, "y_front": 3.7, "width": 5.2, "height": 4.8, "t": 0.02},
-  "hub": {"diameter": 3.0, "overhang": 5.0, "t": 0.03},
+  "nacelle": {
+    "y_rear": -10.3,
+    "y_front": 3.7,
+    "width": 5.2,
+    "height": 4.8,
+    "round": 0.5,
+    "t": 0.02
+  },
+  "hub": {
+    "diameter": 3.0,
+    "overhang": 5.0,
+    "t": 0.03
+  },
   "blade": {
     "_note": "Stations 3-6 from NREL/TP-500-38060 Table 3-1. thick = chord x airfoil thickness ratio (cylinder 100%, DU40 40%, DU25 25%, NACA64 18%). Stations 1, 2 (simplified root) and 7 (tip) are own assumptions.",
     "_station_sources": [
@@ -25,17 +60,52 @@
     "azimuth_deg": 0.0,
     "t": 0.02,
     "stations": [
-      {"r": 0.5,    "chord": 1.8,   "thick": 1.8,   "twist": 13.308},
-      {"r": 3.0,    "chord": 2.0,   "thick": 1.8,   "twist": 13.308},
-      {"r": 8.3333, "chord": 4.167, "thick": 4.167, "twist": 13.308},
-      {"r": 11.75,  "chord": 4.557, "thick": 1.823, "twist": 13.308},
-      {"r": 28.15,  "chord": 4.007, "thick": 1.002, "twist": 7.795},
-      {"r": 44.55,  "chord": 3.010, "thick": 0.542, "twist": 3.125},
-      {"r": 63.0,   "chord": 1.419, "thick": 0.255, "twist": 0.106}
+      {
+        "r": 0.5,
+        "chord": 1.8,
+        "thick": 1.8,
+        "twist": 13.308
+      },
+      {
+        "r": 3.0,
+        "chord": 2.0,
+        "thick": 1.8,
+        "twist": 13.308
+      },
+      {
+        "r": 8.3333,
+        "chord": 4.167,
+        "thick": 4.167,
+        "twist": 13.308
+      },
+      {
+        "r": 11.75,
+        "chord": 4.557,
+        "thick": 1.823,
+        "twist": 13.308
+      },
+      {
+        "r": 28.15,
+        "chord": 4.007,
+        "thick": 1.002,
+        "twist": 7.795
+      },
+      {
+        "r": 44.55,
+        "chord": 3.01,
+        "thick": 0.542,
+        "twist": 3.125
+      },
+      {
+        "r": 63.0,
+        "chord": 1.419,
+        "thick": 0.255,
+        "twist": 0.106
+      }
     ]
   },
   "sources": [
     "NREL/TP-500-38060: Table 3-1 (blade chord, twist, airfoils); hub diameter 3 m and overhang 5 m; tower 6.0 m base to 3.87 m top at 87.6 m",
-    "Nacelle size and position (front face 1.3 m behind the hub centre, giving about 0.37 m minimum blade-to-nacelle clearance), wall thicknesses, blade root and tip stations: own assumptions"
+    "Nacelle size and position (front face 1.3 m behind the hub centre, giving about 0.37 m minimum blade-to-nacelle clearance), nacelle edge rounding (0.5 m), wall thicknesses, blade root and tip stations: own assumptions"
   ]
 }

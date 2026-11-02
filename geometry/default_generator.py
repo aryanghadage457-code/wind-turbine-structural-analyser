@@ -38,12 +38,32 @@ def _tower_surfaces(sections):
     return sorted(keep)
 
 
-def _nacelle_surfaces(nac, z_top):
-    """Box faces (volume removed). Bottom face sits at z_top."""
+def _nacelle_surfaces(nac, z_top, r_top):
+    """Nacelle faces (volume removed). The floor sits at z_top.
+    Optional "round" in the nacelle block: radius that rounds the 4 edges along the
+    rotor axis, so the cross-section becomes a rounded rectangle. The front and rear
+    faces stay flat, and the tower-top circle must fit on the flat part of the floor."""
     w, h = nac["width"], nac["height"]
     y0, y1 = nac["y_rear"], nac["y_front"]
-    occ.addBox(-w / 2, y0, z_top, w, y1 - y0, h)
+    rnd = float(nac.get("round", 0.0))
+    if rnd > 0:
+        if rnd > min(w, h) / 2 - 0.1:
+            raise ValueError("Nacelle rounding is larger than the nacelle can take.")
+        if r_top + rnd + 0.1 > w / 2:
+            raise ValueError("Nacelle rounding too large: the tower top must fit on the "
+                             "flat part of the nacelle floor (reduce 'round' or widen the nacelle).")
+    box = occ.addBox(-w / 2, y0, z_top, w, y1 - y0, h)
     occ.synchronize()
+    if rnd > 0:
+        faces = gmsh.model.getBoundary([(3, box)], oriented=False)
+        curves = {c for f in faces for (_, c) in gmsh.model.getBoundary([f], oriented=False)}
+        edges = []
+        for c in curves:
+            xa, ya, za, xb, yb, zb = gmsh.model.getBoundingBox(1, c)
+            if abs(xb - xa) < 1e-6 and abs(zb - za) < 1e-6:     # edge runs along Y
+                edges.append(c)
+        occ.fillet([box], edges, [rnd])
+        occ.synchronize()
     vols = [e for e in gmsh.model.getEntities(3)]
     faces = []
     for (_, v) in vols:
@@ -76,7 +96,7 @@ def build_default(params):
     if has_head:
         nac, hub = params["nacelle"], params["hub"]
         hub_c = (0.0, hub["overhang"], z_top + nac["height"] / 2)
-        nac_faces = _nacelle_surfaces(nac, z_top)
+        nac_faces = _nacelle_surfaces(nac, z_top, sections[-1]["d1"] / 2)
         hub_face = _hub_surface(hub, nac, z_top)
         if has_blade:
             blades = build_blades(params["blade"], hub_c)
@@ -108,7 +128,28 @@ def build_default(params):
         xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, s)
         if has_head:
             dist_hub = math.dist((cx, cy, cz), hub_c)
-        if typ in ("Cone", "Cylinder"):
+        # Nacelle first: every surface whose centre lies inside the nacelle box
+        # (flat faces AND rounded strips), except pieces of the hub sphere.
+        if has_head and (typ != "Sphere" or dist_hub > hub["diameter"] / 2 + 0.5) \
+                and in_nacelle_box(cx, cy, cz):
+            on_front = abs(cy - nac["y_front"]) < 1e-6 and abs(ymax - ymin) < 1e-6
+            # open tower top: planar disc inside the tower-top circle, lying in
+            # the nacelle floor plane (found by position and size, not by ID)
+            on_floor_disc = (typ == "Plane"
+                             and abs(zmax - zmin) < 1e-6
+                             and abs(cz - z_top) < 1e-6
+                             and math.hypot(cx, cy) < 1e-4
+                             and abs((xmax - xmin) - 2 * r_top) < 1e-3
+                             and abs(occ.getMass(2, s) - disc_area) < 1e-3 * disc_area)
+            if on_floor_disc:
+                discard.append((2, s))        # disc inside tower-top circle
+            elif (typ == "Plane" and on_front
+                  and occ.getMass(2, s) < 0.5 * nac["width"] * nac["height"]):
+                discard.append((2, s))        # front-face disk inside the hub (by area)
+            else:
+                groups.setdefault("Nacelle", []).append(s)
+                thickness["Nacelle"] = nac["t"]
+        elif typ in ("Cone", "Cylinder"):
             for i, sec in enumerate(sections):
                 if sec["z0"] - 1e-6 <= cz <= sec["z1"] + 1e-6:
                     groups.setdefault(f"Tower_{i+1}", []).append(s)
@@ -122,23 +163,6 @@ def build_default(params):
                 thickness["Hub"] = hub["t"]
             else:
                 discard.append((2, s))        # inside nacelle or inside a blade root
-        elif typ == "Plane" and in_nacelle_box(cx, cy, cz):
-            on_front = abs(cy - nac["y_front"]) < 1e-6 and abs(ymax - ymin) < 1e-6
-            # open tower top: planar disc inside the tower-top circle,
-            # lying in the nacelle floor plane (found by position and size,
-            # not by surface ID)
-            on_floor_disc = (abs(zmax - zmin) < 1e-6
-                             and abs(cz - z_top) < 1e-6
-                             and math.hypot(cx, cy) < 1e-4
-                             and abs((xmax - xmin) - 2 * r_top) < 1e-3
-                             and abs(occ.getMass(2, s) - disc_area) < 1e-3 * disc_area)
-            if on_floor_disc:
-                discard.append((2, s))        # disc inside tower-top circle
-            elif on_front and (xmax - xmin) < nac["width"] * 0.99:
-                discard.append((2, s))        # front-face disk inside the hub
-            else:
-                groups.setdefault("Nacelle", []).append(s)
-                thickness["Nacelle"] = nac["t"]
         elif has_blade:
             if dist_hub < hub["diameter"] / 2:
                 discard.append((2, s))        # blade part inside the hub

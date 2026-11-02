@@ -133,8 +133,14 @@ def validate(values, base_cfg=None):
     y_front = v["overhang"] - fixed["front_offset"]
     y_rear = y_front - v["nacelle_length"]
     r_top = v["tower_top_d"] / 2
+    rnd = base["nacelle"].get("round", 0.0)               # rounded edges along the rotor axis
     if r_top > v["nacelle_width"] / 2 - 0.2:
         errs.append("Nacelle is too narrow: the tower top must fit inside its floor (0.2 m margin).")
+    elif rnd > 0 and r_top + rnd + 0.1 > v["nacelle_width"] / 2:
+        errs.append("Nacelle is too narrow for its rounded edges: the tower top must fit on the "
+                    "flat part of the floor.")
+    if rnd > 0 and rnd > min(v["nacelle_width"], v["nacelle_height"]) / 2 - 0.1:
+        errs.append("Nacelle is too small for its rounded edges.")
     if r_top > -y_rear - 0.2 or r_top > y_front - 0.2:
         errs.append("Nacelle floor does not cover the tower top: lengthen the nacelle or "
                     "increase the overhang.")
@@ -244,6 +250,11 @@ if __name__ == "__main__":
     for label, change in cases.items():
         e, _ = validate({**d, **change})
         check(f"rejects: {label}", len(e) > 0)
+    if base["nacelle"].get("round", 0) > 0:
+        e, _ = validate({**d, "nacelle_width": 4.4})
+        check("rejects: nacelle too narrow for its rounded floor", len(e) > 0)
+        check("rounding value is kept by apply_to_config",
+              apply_to_config(d)["nacelle"]["round"] == base["nacelle"]["round"])
     big = apply_to_config({**d, "tower_height": 100.0, "blade_length": 70.0, "yaw_deg": 20.0})
     s = big["tower"]["sections"]
     check("height 100: top of last section is 100", abs(s[-1]["z1"] - 100.0) < 1e-6)

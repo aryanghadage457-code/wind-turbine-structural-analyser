@@ -178,18 +178,41 @@ def check_midside_consistency(mesh: Mesh):
 
 
 def default_joint_spec(group_names):
-    """Joints a normal turbine must have: tower chain, tower top-nacelle, nacelle-hub, hub-each blade."""
-    def num(s):
-        return int(s.split("_")[1])
-    towers = sorted([n for n in group_names if n.startswith("Tower_")], key=num)
-    blades = sorted([n for n in group_names if n.startswith("Blade_")], key=num)
-    spec = [(towers[i], towers[i + 1]) for i in range(len(towers) - 1)]
-    if towers and "Nacelle" in group_names:
+    """Expected joints in the turbine shell model."""
+
+    def num(name):
+        return int(name.split("_")[1])
+
+    towers = sorted(
+        [n for n in group_names if n.startswith("Tower_")],
+        key=num
+    )
+
+    blades = sorted(
+        [n for n in group_names if n.startswith("Blade_")],
+        key=num
+    )
+
+    spec = [
+        (towers[i], towers[i + 1])
+        for i in range(len(towers) - 1)
+    ]
+
+    if towers and "TowerTopRing" in group_names:
+        spec.append((towers[-1], "TowerTopRing"))
+        spec.append(("TowerTopRing", "Nacelle"))
+
+    elif towers and "Nacelle" in group_names:
         spec.append((towers[-1], "Nacelle"))
+
     if "Nacelle" in group_names and "Hub" in group_names:
         spec.append(("Nacelle", "Hub"))
+
     if "Hub" in group_names:
-        spec += [("Hub", b) for b in blades]
+        spec.extend(
+            [("Hub", blade) for blade in blades]
+        )
+
     return spec
 
 

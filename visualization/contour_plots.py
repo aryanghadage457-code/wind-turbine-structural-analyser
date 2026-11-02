@@ -1,6 +1,8 @@
 
 import numpy as np
 import pyvista as pv
+import time
+from vtk import vtkCellPicker
 
 # ============================================================
 # COMMON VALIDATION
@@ -478,73 +480,87 @@ def plot_displacement(
 
 def enable_element_selection(plotter, grid, on_element_selected=None):
 
+    from vtk import vtkCellPicker
+
+    picker = vtkCellPicker()
+    picker.SetTolerance(0.005)
+
     selected = {
         "actor": None,
         "grid": None,
         "element_id": None,
     }
 
-    def handle_selection(picked_mesh):
+    def handle_click(interactor, event):
+
         print("PICKING CALLBACK ACTIVATED", flush=True)
 
-        if picked_mesh is None or picked_mesh.n_cells != 1:
+        x, y = interactor.GetEventPosition()
+
+        hit = picker.Pick(x, y, 0, plotter.renderer)
+
+        if not hit:
+            print("Nothing picked.", flush=True)
             return
 
-        if "original_cell_id" not in picked_mesh.cell_data:
-            print("Original cell ID not found.", flush=True)
+        cell_id = picker.GetCellId()
+        picked_dataset = picker.GetDataSet()
+
+        if cell_id < 0 or picked_dataset is None:
+            print("Invalid picked cell.", flush=True)
             return
 
-        cell_id = int(picked_mesh.cell_data["original_cell_id"][0])
+        original_ids = picked_dataset.GetCellData().GetArray(
+            "original_cell_id"
+        )
 
-        print("Cells received:", picked_mesh.n_cells, flush=True)
-
-        if not (0 <= cell_id < grid.n_cells):
+        if original_ids is None:
+            print("Original cell ID array not found.", flush=True)
             return
 
-        element_id = cell_id + 1
+        original_cell_id = int(original_ids.GetTuple1(cell_id))
 
-        # Ignore repeated clicks on the same element.
+        if not (0 <= original_cell_id < grid.n_cells):
+            print("Invalid original cell ID.", flush=True)
+            return
+
+        element_id = original_cell_id + 1
+
+        print(f"Selected element ID: {element_id}", flush=True)
+
         if selected["element_id"] == element_id:
             return
 
-        # Extract only the selected element.
-        selected_grid = grid.extract_cells([cell_id])
+        selected_grid = grid.extract_cells([original_cell_id])
 
-        # Create the highlight actor only once.
         if selected["actor"] is None:
 
             selected["grid"] = selected_grid
 
             selected["actor"] = plotter.add_mesh(
                 selected["grid"],
-                color="yellow",
+                color="white",
                 show_edges=True,
                 edge_color="black",
-                line_width=2,
+                line_width=3,
                 pickable=False,
                 reset_camera=False,
                 name="selected_element",
             )
 
         else:
-            # Update the existing highlight actor.
             selected["grid"].shallow_copy(selected_grid)
 
         selected["element_id"] = element_id
-
-        print(f"Selected element ID: {element_id}", flush=True)
 
         if on_element_selected is not None:
             on_element_selected(element_id)
 
         plotter.render()
 
-    print("Element picker enabled", flush=True)
-    plotter.enable_element_picking(
-        callback=handle_selection,
-        mode="cell",
-        picker="cell",
-        left_clicking=True,
-        show=False,
-        show_message=False,
+    print("VTK cell picker enabled", flush=True)
+
+    plotter.iren.add_observer(
+        "LeftButtonPressEvent",
+        handle_click,
     )

@@ -21,6 +21,7 @@ from solver.mesh import calculate_s6_areas
 from solver.ccx_writer import write_inp, default_ref_nodes
 from solver.ccx_runner import run_ccx
 from solver import ccx_reader as R
+from solver.loads import orient_turbine
 
 
 # -------------------------------------------------
@@ -61,6 +62,7 @@ def build_full_mesh():
             order=2,
             thickness=thickness
         )
+        
 
     finally:
         gmsh.finalize()
@@ -78,7 +80,7 @@ if __name__ == "__main__":
 
     # Always generate a fresh mesh.
     mesh, thickness = build_full_mesh()
-
+    orient_turbine(mesh)
     S = Settings()
     S.validate()
 

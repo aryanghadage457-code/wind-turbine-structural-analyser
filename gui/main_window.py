@@ -13,7 +13,7 @@ Same constructor as before: MainWindow(project_data).
 embedded in the single-window shell, main.py connects it to go back to the
 Start page; while it is a stand-alone window it simply closes.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
 
 from gui.workspace.bottom_dock import BottomDock
@@ -27,6 +27,7 @@ from gui.workspace.status_bar import StatusBar
 class MainWindow(QMainWindow):
 
     close_requested = Signal()
+    project_action = Signal(str)   # project.new / project.open
 
     def __init__(self, project_data=None, parent=None):
         super().__init__(parent)
@@ -55,7 +56,11 @@ class MainWindow(QMainWindow):
         centre.addWidget(self.dock)
         centre.setStretchFactor(0, 4)
         centre.setStretchFactor(1, 1)
-        centre.setSizes([620, 200])
+        centre.setCollapsible(0, False)
+        centre.setCollapsible(1, False)
+        self.dock.setMinimumHeight(150)
+        self.graphics.setMinimumHeight(260)
+        self._centre_split = centre
 
         main = QSplitter(Qt.Horizontal)
         main.addWidget(self.outline)
@@ -64,8 +69,11 @@ class MainWindow(QMainWindow):
         main.setStretchFactor(0, 0)
         main.setStretchFactor(1, 1)
         main.setStretchFactor(2, 0)
-        main.setSizes([250, 900, 300])
         main.setChildrenCollapsible(False)
+        self.outline.setMinimumWidth(230)
+        self.details.setMinimumWidth(300)
+        self._main_split = main
+        self._sized = False
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -87,6 +95,18 @@ class MainWindow(QMainWindow):
         self.dock.add_message(f"Opened project '{self.project_name}'.")
 
     # ------------------------------------------------------------------
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._sized:
+            self._sized = True
+            QTimer.singleShot(0, self._apply_sizes)
+
+    def _apply_sizes(self):
+        total_w = max(self._main_split.width(), 1000)
+        self._main_split.setSizes([260, total_w - 260 - 320, 320])
+        total_h = max(self._centre_split.height(), 600)
+        self._centre_split.setSizes([total_h - 210, 210])
+
     def _on_outline_selected(self, name, kind):
         if kind == "component":
             self.graphics.set_caption(name)
@@ -99,6 +119,15 @@ class MainWindow(QMainWindow):
         self.dock.log(f"View: {key}")
 
     def _on_action(self, action_id):
+        if action_id in ("project.new", "project.open"):
+            self.project_action.emit(action_id)
+            return
+        if action_id == "project.save":
+            self.dock.add_message(
+                "Nothing to save yet: project data is written when "
+                "the project is created."
+            )
+            return
         # Placeholder: real handlers are connected during integration.
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
 

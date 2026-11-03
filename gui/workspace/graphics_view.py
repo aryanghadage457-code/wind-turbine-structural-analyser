@@ -70,8 +70,8 @@ class PlaceholderViewport(QWidget):
         # message
         p.setPen(QColor(COLORS["text3"]))
         p.setFont(QFont("Segoe UI", 10))
-        p.drawText(self.rect().adjusted(0, 16, 0, 0),
-                   Qt.AlignHCenter | Qt.AlignTop, self.message)
+        p.drawText(self.rect().adjusted(0, 0, 0, -14),
+                   Qt.AlignHCenter | Qt.AlignBottom, self.message)
         p.end()
 
 

@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 MESH_FILE = BASE_DIR / "out" / "full_mesh.pkl"
 GRAVITY_RESULT_FILE = BASE_DIR / "out" / "res_G.pkl"
 STRESS_RESULT_FILE = BASE_DIR / "out" / "stress_strain_results.npz"
+WIND_RESULT_FILE = BASE_DIR / "out" / "res_W.pkl"
 
 
 # --------------------------------------------------
@@ -34,6 +35,8 @@ print("Loading displacement results...")
 
 with open(GRAVITY_RESULT_FILE, "rb") as file:
     gravity_result = pickle.load(file)
+with open(WIND_RESULT_FILE, "rb") as file:
+    wind_result = pickle.load(file)
 
 print("Loading stress and strain results...")
 
@@ -65,18 +68,35 @@ print(f"Elements: {original_grid.n_cells}")
 
 
 # --------------------------------------------------
-# Apply deformation
+# Apply combined gravity + wind deformation
 # --------------------------------------------------
+
+wind_speed = 25.0  # Operating wind speed in m/s
+v_ref = wind_result.v_ref
+
+if v_ref is None or v_ref <= 0:
+    raise ValueError("Invalid reference wind speed in wind result.")
+
+wind_scale = (wind_speed / v_ref) ** 2
+
+if gravity_result.displacements.shape != wind_result.displacements.shape:
+    raise ValueError("Gravity and wind displacement shapes do not match.")
+
+total_displacements = (
+    gravity_result.displacements
+    + wind_scale * wind_result.displacements
+)
 
 deformation_scale = 1.0
 
 deformed_grid = apply_deformation(
     original_grid,
-    gravity_result.displacements,
+    total_displacements,
     scale=deformation_scale
 )
 
-print("Deformation applied.")
+print(f"Combined deformation applied at {wind_speed} m/s.")
+print(f"Wind displacement scale: {wind_scale:.4f}")
 
 
 # --------------------------------------------------

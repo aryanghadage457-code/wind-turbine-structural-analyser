@@ -55,15 +55,17 @@ Quick use:
     from StressAndStrain import *
     g   = load_solve_result("out/res_G.pkl")
     mat = MaterialProps.from_inp("out/G.inp", n_elems=g.stress_outer.shape[0])
-    res = calculate_stress_and_strain(g, make_zero_wind_result(g), wind_speed=0.0, material=mat)
+    w   = load_solve_result("out/res_W.pkl")
+    mesh = load_mesh("out/full_mesh.pkl")
+    wind_mesh = load_mesh("out/wind_mesh.pkl")
+    res = calculate_stress_and_strain(g, w, wind_speed=25.0, material=mat,
+                                      mesh=mesh, wind_mesh=wind_mesh)
     print(res.report())
-Future (real wind from Member 2) - same call, nothing else changes:
-    res = calculate_stress_and_strain(g, wind_result_W, wind_speed=25.0, material=mat)
 
 Element-wise Excel export (every element, outer and inner on separate sheets; needs `pip install openpyxl`):
     paths = export_element_results(res, "results", mesh=mesh)    # element_stress_results.xlsx + element_strain_results.xlsx
-Command line (prints the summary AND writes both workbooks; --no-export skips the files):
-    python StressAndStrain.py --wind zero --speed 0
+Command line (uses the actual Member 2 wind result and mesh by default):
+    python StressAndStrain.py --speed 25
 """
 from __future__ import annotations
 
@@ -468,11 +470,13 @@ def make_zero_wind_result(gravity_result: SolveResult, v_ref: float = 1.0) -> So
     return w
 
 
-def validate_gravity_wind_pair(gravity: SolveResult, wind: SolveResult, mesh: Optional[Mesh] = None) -> None:
-    """Refuse to combine results that cannot be on the same mesh / convention. Checks what the data allow:
-    case labels, array shapes, finiteness, inner-surface availability and node/element counts. (The frame
-    and element ORDER cannot be proven from SolveResult alone; counts + the same-mesh requirement are the
-    available evidence, see module docstring.)"""
+def validate_gravity_wind_pair(
+    gravity: SolveResult,
+    wind: SolveResult,
+    mesh: Optional[Mesh] = None,
+    wind_mesh: Optional[Mesh] = None,
+) -> None:
+    """Validate both SolveResults and compare their meshes when both are supplied."""
     for name, r in (("gravity_result", gravity), ("wind_result", wind)):
         if not isinstance(r, SolveResult):
             raise TypeError(f"{name} must be a contracts.SolveResult, got {type(r).__name__}")
@@ -496,9 +500,25 @@ def validate_gravity_wind_pair(gravity: SolveResult, wind: SolveResult, mesh: Op
                          f"{wind.displacements.shape}): results are not on the same mesh")
     if mesh is not None:
         if mesh.n_elems != gravity.stress_outer.shape[0]:
-            raise ValueError(f"mesh has {mesh.n_elems} elements but the results have {gravity.stress_outer.shape[0]}")
+            raise ValueError(f"gravity mesh has {mesh.n_elems} elements but gravity results have {gravity.stress_outer.shape[0]}")
         if mesh.n_nodes != gravity.displacements.shape[0]:
-            raise ValueError(f"mesh has {mesh.n_nodes} nodes but the results have {gravity.displacements.shape[0]}")
+            raise ValueError(f"gravity mesh has {mesh.n_nodes} nodes but gravity results have {gravity.displacements.shape[0]}")
+
+    if wind_mesh is not None:
+        if wind_mesh.n_elems != wind.stress_outer.shape[0]:
+            raise ValueError(f"wind mesh has {wind_mesh.n_elems} elements but wind results have {wind.stress_outer.shape[0]}")
+        if wind_mesh.n_nodes != wind.displacements.shape[0]:
+            raise ValueError(f"wind mesh has {wind_mesh.n_nodes} nodes but wind results have {wind.displacements.shape[0]}")
+
+    if mesh is not None and wind_mesh is not None:
+        if not np.array_equal(mesh.nodes, wind_mesh.nodes):
+            raise ValueError("Gravity and wind mesh node coordinates do not match")
+        if not np.array_equal(mesh.elems, wind_mesh.elems):
+            raise ValueError("Gravity and wind mesh element connectivity does not match")
+        if not np.array_equal(mesh.elem_group, wind_mesh.elem_group):
+            raise ValueError("Gravity and wind mesh element groups do not match")
+        if mesh.group_names != wind_mesh.group_names:
+            raise ValueError("Gravity and wind mesh group names do not match")
 
 
 # ----------------------------------------------------------------------------
@@ -567,7 +587,8 @@ def calculate_stress_and_strain(gravity_result: SolveResult,
                                 *,
                                 wind_v_ref: Optional[float] = None,
                                 strain_model: str = "plane_stress",
-                                mesh: Optional[Mesh] = None) -> StressStrainResult:
+                                mesh: Optional[Mesh] = None,
+                                wind_mesh: Optional[Mesh] = None) -> StressStrainResult:
     """Combined gravity + wind stress and strain for every element, outer and inner surface separately.
 
     gravity_result : SolveResult, case 'G' (e.g. out/res_G.pkl)
@@ -577,9 +598,10 @@ def calculate_stress_and_strain(gravity_result: SolveResult,
     material       : MaterialProps (per element, recommended: MaterialProps.from_inp), Settings or {'E','nu'}.
     wind_v_ref     : only needed if wind_result.v_ref is None; must agree with it when both are given.
     strain_model   : 'plane_stress' (default, shell) or 'full_3d'.
-    mesh           : optional Mesh; adds group names and mesh-size validation.
+    mesh           : optional gravity Mesh; adds group names and mesh-size validation.
+    wind_mesh      : optional wind Mesh; compared exactly with mesh when both are supplied.
     """
-    validate_gravity_wind_pair(gravity_result, wind_result, mesh)
+    validate_gravity_wind_pair(gravity_result, wind_result, mesh, wind_mesh)
     n_elems = gravity_result.stress_outer.shape[0]
     mat = resolve_material(material, n_elems)
 
@@ -998,8 +1020,11 @@ def _main():
     ap.add_argument("--mesh", default="out/full_mesh.pkl",
                     help="optional mesh pickle (group names)")
 
-    ap.add_argument("--wind", default="zero",
-                    help="'zero', 'synthetic', or a pickled SolveResult (case W)")
+    ap.add_argument("--wind", default="out/res_W.pkl",
+                    help="pickled actual wind SolveResult, case W (default: out/res_W.pkl)")
+
+    ap.add_argument("--wind-mesh", default="out/wind_mesh.pkl",
+                    help="wind mesh pickle used to verify it matches the gravity mesh")
 
     ap.add_argument("--speed", type=float, default=0.0,
                     help="wind speed v in m/s")
@@ -1030,21 +1055,20 @@ def _main():
 
     mat = MaterialProps.from_inp(a.inp, n)
 
-    if a.wind == "zero":
-        w = make_zero_wind_result(g)
-
-    elif a.wind == "synthetic":
-        from synthetic_wind_data import make_synthetic_wind_result
-        w = make_synthetic_wind_result(g)
-
-    else:
-        w = load_solve_result(a.wind)
+    w = load_solve_result(a.wind)
+    if not a.wind_mesh or not os.path.isfile(a.wind_mesh):
+        raise FileNotFoundError(
+            f"Wind mesh not found: {a.wind_mesh}. It is required to verify that "
+            "the gravity and wind results use identical meshes."
+        )
+    wind_mesh = load_mesh(a.wind_mesh)
 
     # Calculate stress and strain ONCE
     res = calculate_stress_and_strain(
         g, w, a.speed, mat,
         strain_model=a.strain_model,
-        mesh=mesh
+        mesh=mesh,
+        wind_mesh=wind_mesh
     )
 
     # Print summary

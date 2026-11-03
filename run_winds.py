@@ -34,7 +34,7 @@ CCX_EXE =r"C:\Users\banda\Downloads\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-
 # BUILD FULL TURBINE MESH
 # -------------------------------------------------
 
-def build_full_mesh():
+def build_full_mesh(S):
 
     from geometry.default_generator import load_params, build_default
     from solver.mesh import build_mesh
@@ -49,7 +49,7 @@ def build_full_mesh():
 
         mesh = build_mesh(
             groups,
-            h=1.0,
+            h=S.mesh_size,
             h_base=0.5,
             d_refine=6.0,
             order=2,
@@ -71,10 +71,11 @@ if __name__ == "__main__":
     os.makedirs("out", exist_ok=True)
 
     # Always generate a fresh mesh.
-    mesh, thickness = build_full_mesh()
-
     S = Settings()
     S.validate()
+    mesh, thickness = build_full_mesh(S)
+
+    
 
     # IMPORTANT:
     # Apply the same element orientation procedure

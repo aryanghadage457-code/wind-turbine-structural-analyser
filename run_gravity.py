@@ -12,6 +12,7 @@ import pickle
 
 import gmsh
 import numpy as np
+from solver.loads import orient_turbine
 
 from pathlib import Path
 
@@ -81,7 +82,8 @@ if __name__ == "__main__":
     S.validate()
     mesh, thickness = build_full_mesh(S)
 
-    
+    # Apply consistent element orientation.
+    orient_turbine(mesh)
 
     bcs.assign_node_sets(mesh)
 

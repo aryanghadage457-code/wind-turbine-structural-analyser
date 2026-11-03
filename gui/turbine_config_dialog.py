@@ -1,18 +1,27 @@
+"""Turbine configuration dialog for the built-in model.
+
+Result (unchanged): dialog.dimensions = {"tower": {...}, "nacelle": {...},
+"rotor": {...}}, filled when the user presses Generate Geometry.
+
+Note: these fields do not yet match Member 1's 12 parameters. That is
+handled in the integration phase; this file is restyled only.
+"""
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QFormLayout,
     QDoubleSpinBox,
+    QFormLayout,
+    QFrame,
     QGroupBox,
+    QLabel,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
+    QVBoxLayout,
     QWidget,
-    QMessageBox
 )
 
-from PySide6.QtCore import Qt
+from gui.components.dialog_parts import make_footer, make_header
 
 
 class TurbineConfigDialog(QDialog):
@@ -22,304 +31,125 @@ class TurbineConfigDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("Turbine Configuration")
-
-        self.setMinimumSize(550, 650)
+        self.setMinimumSize(580, 700)
 
         self.dimensions = {}
 
-        self.setStyleSheet("""
-
-            QDialog {
-                background-color: #202329;
-                color: #F2F3F5;
-            }
-
-            QLabel {
-                color: #F2F3F5;
-            }
-
-            QGroupBox {
-                background-color: #292D34;
-                border: 1px solid #414751;
-                border-radius: 7px;
-                margin-top: 12px;
-                padding: 12px;
-                font-weight: bold;
-            }
-
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 5px;
-            }
-
-            QDoubleSpinBox {
-                background-color: #343941;
-                color: white;
-                border: 1px solid #414751;
-                border-radius: 5px;
-                padding: 6px;
-                min-height: 25px;
-            }
-
-            QPushButton {
-                background-color: #343941;
-                color: white;
-                border: 1px solid #414751;
-                border-radius: 5px;
-                padding: 9px 15px;
-            }
-
-            QPushButton:hover {
-                background-color: #0078D4;
-            }
-
-            QPushButton#PrimaryButton {
-                background-color: #0078D4;
-                border: none;
-            }
-
-            QPushButton#PrimaryButton:hover {
-                background-color: #0063B1;
-            }
-
-        """)
-
         self.create_interface()
 
-
     # ==========================================
-    # CREATE INTERFACE
+    # INTERFACE
     # ==========================================
 
     def create_interface(self):
 
-        main_layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        main_layout.setContentsMargins(
-            25, 25, 25, 25
+        root.addWidget(
+            make_header(
+                "sliders",
+                "Turbine Dimensions",
+                "Customise the dimensions of your wind turbine. "
+                "All dimensions are in metres."
+            )
         )
 
-        main_layout.setSpacing(15)
-
-        # Heading
-        title = QLabel("Turbine Dimensions")
-
-        title.setStyleSheet("""
-            font-size: 22px;
-            font-weight: bold;
-        """)
-
-        subtitle = QLabel(
-            "Customize the dimensions of your wind turbine. "
-            "All dimensions are in metres."
-        )
-
-        subtitle.setWordWrap(True)
-
-        subtitle.setStyleSheet(
-            "color: #A5ABB4;"
-        )
-
-        main_layout.addWidget(title)
-        main_layout.addWidget(subtitle)
-
-        # ======================================
-        # SCROLL AREA
-        # ======================================
-
+        # Scrollable body
         scroll = QScrollArea()
-
         scroll.setWidgetResizable(True)
-
-        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
 
         content = QWidget()
+        content.setObjectName("ConfigContent")
+        content.setStyleSheet(
+            "QWidget#ConfigContent { background: transparent; }"
+        )
 
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(26, 18, 18, 18)
+        layout.setSpacing(6)
 
-        layout.setSpacing(15)
+        # ---------------- Tower ----------------
+        self.tower_height = self.create_input(80, 200, 100)
+        self.tower_base = self.create_input(2, 10, 5)
+        self.tower_top = self.create_input(1, 8, 3)
+        self.tower_thickness = self.create_input(0.02, 0.5, 0.05)
 
-        # ======================================
-        # TOWER DIMENSIONS
-        # ======================================
+        layout.addWidget(self.create_group("Tower", [
+            ("Height", self.tower_height),
+            ("Base diameter", self.tower_base),
+            ("Top diameter", self.tower_top),
+            ("Wall thickness", self.tower_thickness),
+        ]))
 
-        tower_group = QGroupBox("Tower")
+        # ---------------- Nacelle ----------------
+        self.nacelle_length = self.create_input(2, 20, 12)
+        self.nacelle_width = self.create_input(1, 8, 4)
+        self.nacelle_height = self.create_input(1, 8, 4)
 
-        tower_form = QFormLayout(tower_group)
+        layout.addWidget(self.create_group("Nacelle", [
+            ("Length", self.nacelle_length),
+            ("Width", self.nacelle_width),
+            ("Height", self.nacelle_height),
+        ]))
 
-        self.tower_height = self.create_input(
-            80, 200, 100
-        )
+        # ---------------- Hub and blades ----------------
+        self.hub_diameter = self.create_input(1, 8, 3)
+        self.blade_length = self.create_input(10, 100, 50)
+        self.blade_root_width = self.create_input(0.5, 5, 3)
+        self.blade_tip_width = self.create_input(0.1, 3, 0.5)
+        self.blade_thickness = self.create_input(0.05, 1, 0.3)
 
-        self.tower_base = self.create_input(
-            2, 10, 5
-        )
-
-        self.tower_top = self.create_input(
-            1, 8, 3
-        )
-
-        self.tower_thickness = self.create_input(
-            0.02, 0.5, 0.05
-        )
-
-        tower_form.addRow(
-            "Height (m):",
-            self.tower_height
-        )
-
-        tower_form.addRow(
-            "Base diameter (m):",
-            self.tower_base
-        )
-
-        tower_form.addRow(
-            "Top diameter (m):",
-            self.tower_top
-        )
-
-        tower_form.addRow(
-            "Thickness (m):",
-            self.tower_thickness
-        )
-
-        layout.addWidget(tower_group)
-
-        # ======================================
-        # NACELLE DIMENSIONS
-        # ======================================
-
-        nacelle_group = QGroupBox("Nacelle")
-
-        nacelle_form = QFormLayout(nacelle_group)
-
-        self.nacelle_length = self.create_input(
-            2, 20, 12
-        )
-
-        self.nacelle_width = self.create_input(
-            1, 8, 4
-        )
-
-        self.nacelle_height = self.create_input(
-            1, 8, 4
-        )
-
-        nacelle_form.addRow(
-            "Length (m):",
-            self.nacelle_length
-        )
-
-        nacelle_form.addRow(
-            "Width (m):",
-            self.nacelle_width
-        )
-
-        nacelle_form.addRow(
-            "Height (m):",
-            self.nacelle_height
-        )
-
-        layout.addWidget(nacelle_group)
-
-        # ======================================
-        # HUB AND BLADES
-        # ======================================
-
-        rotor_group = QGroupBox("Hub and Blades")
-
-        rotor_form = QFormLayout(rotor_group)
-
-        self.hub_diameter = self.create_input(
-            1, 8, 3
-        )
-
-        self.blade_length = self.create_input(
-            10, 100, 50
-        )
-
-        self.blade_root_width = self.create_input(
-            0.5, 5, 3
-        )
-
-        self.blade_tip_width = self.create_input(
-            0.1, 3, 0.5
-        )
-
-        self.blade_thickness = self.create_input(
-            0.05, 1, 0.3
-        )
-
-        rotor_form.addRow(
-            "Hub diameter (m):",
-            self.hub_diameter
-        )
-
-        rotor_form.addRow(
-            "Blade length (m):",
-            self.blade_length
-        )
-
-        rotor_form.addRow(
-            "Blade root width (m):",
-            self.blade_root_width
-        )
-
-        rotor_form.addRow(
-            "Blade tip width (m):",
-            self.blade_tip_width
-        )
-
-        rotor_form.addRow(
-            "Blade thickness (m):",
-            self.blade_thickness
-        )
-
-        layout.addWidget(rotor_group)
+        layout.addWidget(self.create_group("Hub and Blades", [
+            ("Hub diameter", self.hub_diameter),
+            ("Blade length", self.blade_length),
+            ("Blade root width", self.blade_root_width),
+            ("Blade tip width", self.blade_tip_width),
+            ("Blade thickness", self.blade_thickness),
+        ]))
 
         layout.addStretch()
 
         scroll.setWidget(content)
+        root.addWidget(scroll, 1)
 
-        main_layout.addWidget(scroll)
-
-        # ======================================
-        # BUTTONS
-        # ======================================
-
-        buttons = QHBoxLayout()
-
+        # ---------------- Footer ----------------
         cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
 
-        cancel_button.clicked.connect(
-            self.reject
-        )
+        generate_button = QPushButton("Generate Geometry")
+        generate_button.setObjectName("PrimaryButton")
+        generate_button.setDefault(True)
+        generate_button.clicked.connect(self.save_dimensions)
 
-        generate_button = QPushButton(
-            "Generate Geometry"
-        )
-
-        generate_button.setObjectName(
-            "PrimaryButton"
-        )
-
-        generate_button.clicked.connect(
-            self.save_dimensions
-        )
-
-        buttons.addStretch()
-
-        buttons.addWidget(cancel_button)
-
-        buttons.addWidget(generate_button)
-
-        main_layout.addLayout(buttons)
-
+        root.addWidget(make_footer(cancel_button, generate_button))
 
     # ==========================================
-    # CREATE DIMENSION INPUT
+    # BUILDING BLOCKS
     # ==========================================
+
+    def create_group(self, title, rows):
+
+        group = QGroupBox(title)
+
+        form = QFormLayout(group)
+        form.setHorizontalSpacing(24)
+        form.setVerticalSpacing(10)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        for text, widget in rows:
+
+            label = QLabel(text.upper())
+            label.setObjectName("FieldLabel")
+
+            form.addRow(label, widget)
+
+        return group
 
     def create_input(
         self,
@@ -343,8 +173,9 @@ class TurbineConfigDialog(QDialog):
 
         spin.setSuffix(" m")
 
-        return spin
+        spin.setMinimumWidth(150)
 
+        return spin
 
     # ==========================================
     # VALIDATE AND SAVE DIMENSIONS

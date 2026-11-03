@@ -1,13 +1,21 @@
+"""Model source dialog: built-in turbine or imported STEP file.
+
+Result (unchanged): dialog.model_source == "builtin" or "step"
+(None if cancelled).
+"""
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QFrame
+    QVBoxLayout,
 )
 
-from PySide6.QtCore import Qt
+from gui.components.dialog_parts import make_footer, make_header
+from gui.theme.icons import pixmap
+from gui.theme.styles import COLORS
 
 
 class ModelSourceDialog(QDialog):
@@ -19,215 +27,124 @@ class ModelSourceDialog(QDialog):
         self.model_source = None
 
         self.setWindowTitle("Select Turbine Model")
-        self.setMinimumSize(700, 430)
-
-        self.setStyleSheet("""
-
-            QDialog {
-                background-color: #202329;
-                color: #F2F3F5;
-            }
-
-            QLabel {
-                color: #F2F3F5;
-            }
-
-            QFrame#ModelCard {
-                background-color: #292D34;
-                border: 1px solid #414751;
-                border-radius: 10px;
-            }
-
-            QPushButton {
-                background-color: #343941;
-                color: white;
-                border: 1px solid #414751;
-                border-radius: 5px;
-                padding: 10px;
-            }
-
-            QPushButton:hover {
-                background-color: #0078D4;
-            }
-
-            QPushButton#PrimaryButton {
-                background-color: #0078D4;
-                border: none;
-            }
-
-            QPushButton#PrimaryButton:hover {
-                background-color: #0063B1;
-            }
-
-        """)
+        self.setMinimumSize(740, 470)
 
         self.create_interface()
 
-
     # ==========================================
-    # CREATE INTERFACE
+    # INTERFACE
     # ==========================================
 
     def create_interface(self):
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        layout.setContentsMargins(30, 25, 30, 25)
-        layout.setSpacing(20)
-
-        # Heading
-        title = QLabel("Choose Your Turbine Model")
-
-        title.setStyleSheet("""
-            font-size: 23px;
-            font-weight: bold;
-        """)
-
-        title.setAlignment(Qt.AlignCenter)
-
-        subtitle = QLabel(
-            "How would you like to define the geometry "
-            "for your wind turbine?"
+        root.addWidget(
+            make_header(
+                "cube",
+                "Choose Your Turbine Model",
+                "How would you like to define the geometry "
+                "for your wind turbine?"
+            )
         )
 
-        subtitle.setWordWrap(True)
-        subtitle.setAlignment(Qt.AlignCenter)
+        body = QVBoxLayout()
+        body.setContentsMargins(26, 24, 26, 20)
 
-        subtitle.setStyleSheet(
-            "color: #A5ABB4; font-size: 13px;"
-        )
+        cards = QHBoxLayout()
+        cards.setSpacing(20)
 
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-
-        # ======================================
-        # MODEL OPTIONS
-        # ======================================
-
-        cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(20)
-
-        # Built-in model card
         builtin_card = self.create_card(
-
-            "BUILT-IN CAD MODEL",
-
-            "Start with our predefined wind turbine model "
-            "and customize the dimensions of its components.",
-
-            "Customize Dimensions"
-
+            "turbine",
+            "PARAMETRIC",
+            "Built-in CAD Model",
+            "Start with the predefined wind turbine model "
+            "and customise the dimensions of its components.",
+            "Customise Dimensions"
         )
+        builtin_card.button.clicked.connect(self.select_builtin)
 
-        builtin_card.button.clicked.connect(
-            self.select_builtin
-        )
-
-        # STEP model card
         step_card = self.create_card(
-
-            "IMPORT STEP MODEL",
-
+            "cube",
+            "CAD IMPORT",
+            "Import STEP Model",
             "Import your existing wind turbine CAD model "
-            "using STEP file format.",
-
+            "using the STEP file format (.step, .stp).",
             "Import STEP File"
-
         )
+        step_card.button.clicked.connect(self.select_step)
 
-        step_card.button.clicked.connect(
-            self.select_step
-        )
+        cards.addWidget(builtin_card)
+        cards.addWidget(step_card)
 
-        cards_layout.addWidget(builtin_card)
-        cards_layout.addWidget(step_card)
+        body.addLayout(cards)
+        body.addStretch()
 
-        layout.addLayout(cards_layout)
-
-        layout.addStretch()
-
-        # ======================================
-        # CANCEL BUTTON
-        # ======================================
+        root.addLayout(body, 1)
 
         cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
 
-        cancel_button.clicked.connect(
-            self.reject
-        )
-
-        layout.addWidget(cancel_button)
-
+        root.addWidget(make_footer(cancel_button))
 
     # ==========================================
-    # CREATE MODEL CARD
+    # MODEL CARD
     # ==========================================
 
     def create_card(
         self,
+        icon_name,
+        tag,
         title,
         description,
         button_text
     ):
 
         card = QFrame()
+        card.setObjectName("ActionCard")
+        card.setMinimumHeight(270)
 
-        card.setObjectName("ModelCard")
-        card.setMinimumHeight(230)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(8)
 
-        card_layout = QVBoxLayout(card)
+        glyph = QLabel()
+        glyph.setPixmap(pixmap(icon_name, COLORS["accent"], 40))
+        glyph.setFixedHeight(44)
 
-        card_layout.setContentsMargins(
-            20, 20, 20, 20
-        )
+        tag_label = QLabel(tag)
+        tag_label.setObjectName("GroupLabel")
 
-        card_layout.setSpacing(15)
-
-        # Card heading
         heading = QLabel(title)
-
-        heading.setStyleSheet("""
-            font-size: 16px;
-            font-weight: bold;
-            color: #00B8D9;
-        """)
-
+        heading.setObjectName("SectionTitle")
         heading.setWordWrap(True)
 
-        # Description
         description_label = QLabel(description)
-
+        description_label.setObjectName("SecondaryText")
         description_label.setWordWrap(True)
 
-        description_label.setStyleSheet(
-            "color: #A5ABB4;"
-        )
-
-        # Button
         button = QPushButton(button_text)
-
         button.setObjectName("PrimaryButton")
-
         button.setMinimumHeight(42)
-
         button.setCursor(Qt.PointingHandCursor)
 
-        card_layout.addWidget(heading)
-
-        card_layout.addWidget(description_label)
-
-        card_layout.addStretch()
-
-        card_layout.addWidget(button)
+        layout.addWidget(glyph)
+        layout.addSpacing(4)
+        layout.addWidget(tag_label)
+        layout.addWidget(heading)
+        layout.addWidget(description_label)
+        layout.addStretch()
+        layout.addWidget(button)
 
         # Store button reference
         card.button = button
 
         return card
 
-
     # ==========================================
-    # SELECT BUILT-IN MODEL
+    # SELECTION
     # ==========================================
 
     def select_builtin(self):
@@ -235,11 +152,6 @@ class ModelSourceDialog(QDialog):
         self.model_source = "builtin"
 
         self.accept()
-
-
-    # ==========================================
-    # SELECT STEP MODEL
-    # ==========================================
 
     def select_step(self):
 

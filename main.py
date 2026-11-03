@@ -16,7 +16,7 @@ from gui.project_dialog import ProjectDialog
 from gui.model_source_dialog import ModelSourceDialog
 from gui.turbine_config_dialog import TurbineConfigDialog
 
-from gui.theme.styles import APP_STYLESHEET
+from gui.theme.styles import install_theme
 from gui.start_page import StartPage
 from gui.main_window import MainWindow
 
@@ -345,7 +345,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
-    app.setStyleSheet(APP_STYLESHEET)
+    install_theme(app)
 
     window = Application()
 

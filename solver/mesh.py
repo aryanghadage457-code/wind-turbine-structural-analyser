@@ -57,8 +57,8 @@ def get_tower_groups(groups):
     }
 
 
-def find_base_curves(tower_groups, tol=1e-4):
-    """Find bottom boundary curves of tower surfaces."""
+def find_base_curves(tower_groups, tol=1e-3):
+    """Find bottom boundary curves of all tower surfaces."""
 
     surfaces = [
         (2, tag)
@@ -66,19 +66,26 @@ def find_base_curves(tower_groups, tol=1e-4):
         for tag in tags
     ]
 
-    boundary = gmsh.model.getBoundary(
-        surfaces,
-        combined=True,
-        oriented=False,
-        recursive=False
-    )
+    if not surfaces:
+        raise ValueError("No tower surfaces supplied.")
 
+    # Find the lowest Z coordinate of the tower.
     z_min = min(
         gmsh.model.getBoundingBox(2, tag)[2]
         for _, tag in surfaces
     )
 
-    base_curves = []
+    # Examine individual surface boundaries.
+    # combined=False prevents Gmsh from cancelling boundary
+    # curves when combining multiple tower surfaces.
+    boundary = gmsh.model.getBoundary(
+        surfaces,
+        combined=False,
+        oriented=False,
+        recursive=False
+    )
+
+    base_curves = set()
 
     for dim, tag in boundary:
 
@@ -87,16 +94,25 @@ def find_base_curves(tower_groups, tol=1e-4):
 
         box = gmsh.model.getBoundingBox(1, tag)
 
+        # The entire curve must lie at the tower's lowest Z.
         if (
             abs(box[2] - z_min) < tol
             and abs(box[5] - z_min) < tol
         ):
-            base_curves.append(tag)
+            base_curves.add(tag)
 
     if not base_curves:
-        raise ValueError("Could not identify tower base curves.")
+        raise ValueError(
+            f"Could not identify tower base curves. "
+            f"Lowest tower Z = {z_min:.6f}"
+        )
 
-    return base_curves
+    print(
+        f"Tower base curves found: {len(base_curves)} "
+        f"at Z={z_min:.4f} m"
+    )
+
+    return sorted(base_curves)
 
 
 def calculate_total_area(groups):

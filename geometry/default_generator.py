@@ -357,10 +357,27 @@ def build_default(params):
                 (cx, cy, cz), hub_c
             )
 
+                 
+            # -------------------------------------------------
+        # Nacelle fillet surfaces (cylindrical)
+        # -------------------------------------------------
+        if (
+            has_head
+            and typ in ("Cylinder", "Cone")
+            and xmin >= -nac["width"] / 2 - 1e-5
+            and xmax <= nac["width"] / 2 + 1e-5
+            and ymin >= nac["y_rear"] - 1e-5
+            and ymax <= nac["y_front"] + 1e-5
+            and zmin >= z_top - 1e-5
+            and zmax <= z_top + nac["height"] + 1e-5
+        ):
+            groups.setdefault("Nacelle", []).append(s)
+            thickness["Nacelle"] = nac["t"]
+
         # -------------------------------------------------
         # Tower lateral surfaces
         # -------------------------------------------------
-        if typ in ("Cone", "Cylinder"):
+        elif typ in ("Cone", "Cylinder"):
 
             for i, sec in enumerate(sections):
                 if (

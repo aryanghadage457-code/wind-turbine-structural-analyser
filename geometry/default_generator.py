@@ -65,33 +65,101 @@ def _tower_surfaces(sections):
     return sorted(keep)
 
 
-def _nacelle_surfaces(nac, z_top):
-    """Create the nacelle box surfaces."""
+
+def _nacelle_surfaces(nac, z_top, r_top):
+    """Create nacelle surfaces with four rounded longitudinal edges."""
+
     w = nac["width"]
     h = nac["height"]
     y0 = nac["y_rear"]
     y1 = nac["y_front"]
+    rnd = float(nac.get("round", 0.0))
 
-    occ.addBox(
+    if rnd > 0:
+        if rnd > min(w, h) / 2 - 0.1:
+            raise ValueError(
+                "Nacelle rounding is larger than the nacelle can take."
+            )
+
+    box = occ.addBox(
         -w / 2, y0, z_top,
         w, y1 - y0, h
     )
+
     occ.synchronize()
 
+    if rnd > 0:
+        faces = gmsh.model.getBoundary(
+            [(3, box)], oriented=False
+        )
+
+        curves = set()
+
+        for _, face in faces:
+            boundary = gmsh.model.getBoundary(
+                [(2, face)], oriented=False
+            )
+            curves.update(
+                tag for dim, tag in boundary if dim == 1
+            )
+
+        edges = []
+        tol = 1e-4
+        expected_length = y1 - y0
+
+        for c in sorted(curves):
+            xmin, ymin, zmin, xmax, ymax, zmax = (
+                gmsh.model.getBoundingBox(1, c)
+            )
+
+            # Must be a long edge parallel to Y.
+            if (
+                abs((ymax - ymin) - expected_length) < tol
+                and abs(xmax - xmin) < tol
+                and abs(zmax - zmin) < tol
+            ):
+                x_mid = (xmin + xmax) / 2
+                z_mid = (zmin + zmax) / 2
+
+                at_side = (
+                    abs(abs(x_mid) - w / 2) < tol
+                )
+
+                at_top_or_bottom = (
+                    abs(z_mid - z_top) < tol
+                    or abs(z_mid - (z_top + h)) < tol
+                )
+
+                if at_side and at_top_or_bottom:
+                    edges.append(c)
+
+        print("Nacelle longitudinal edges:", len(edges))
+        print("Selected edge tags:", edges)
+
+        if len(edges) != 4:
+            raise RuntimeError(
+                f"Expected 4 Nacelle longitudinal edges, "
+                f"found {len(edges)}"
+            )
+
+        occ.fillet([box], edges, [rnd])
+        occ.synchronize()
+
     vols = gmsh.model.getEntities(3)
-    faces = []
+    result_faces = []
 
     for _, v in vols:
-        faces.extend(
-            s for _, s in gmsh.model.getBoundary(
+        result_faces.extend(
+            tag for dim, tag in gmsh.model.getBoundary(
                 [(3, v)], oriented=False
-            )
+            ) if dim == 2
         )
 
     occ.remove(vols)
     occ.synchronize()
 
-    return faces
+    return result_faces
+
 
 
 def _hub_surface(hub, nac, z_top):
@@ -198,7 +266,11 @@ def build_default(params):
             z_top + nac["height"] / 2
         )
 
-        nac_faces = _nacelle_surfaces(nac, z_top)
+        nac_faces = _nacelle_surfaces(
+    nac,
+    z_top,
+    sections[-1]["d1"] / 2
+)
         hub_face = _hub_surface(hub, nac, z_top)
 
         ring_faces = _tower_top_ring(
@@ -341,8 +413,10 @@ def build_default(params):
         # -------------------------------------------------
         # Nacelle planar surfaces
         # -------------------------------------------------
-        elif typ == "Plane" and in_nacelle_box(
-            cx, cy, cz
+        elif (
+            has_head
+            and typ != "Sphere"
+            and in_nacelle_box(cx, cy, cz)
         ):
 
             on_front = (
@@ -367,8 +441,14 @@ def build_default(params):
                 discard.append((2, s))
 
             elif on_front and (
-                xmax - xmin < nac["width"] * 0.99
-            ):
+    xmax - xmin < nac["width"] * 0.99
+):
+                print(
+                    f"Discarding Nacelle front surface {s}: "
+                    f"x={xmin:.3f}..{xmax:.3f}, "
+                    f"y={ymin:.3f}..{ymax:.3f}, "
+                    f"z={zmin:.3f}..{zmax:.3f}"
+                )
                 discard.append((2, s))
 
             else:

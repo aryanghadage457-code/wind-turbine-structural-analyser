@@ -10,6 +10,7 @@ Run after confirming that the mesh generation and gravity case work.
 import os
 import pickle
 import argparse
+import json
 
 import gmsh
 import numpy as np
@@ -80,10 +81,14 @@ if __name__ == "__main__":
     
 
     args = parser.parse_args()
+    if not np.isfinite(args.direction):
+      parser.error("Wind direction must be a finite number.")
+
+    direction = args.direction % 360.0
 
     # Apply user inputs
     S = Settings()
-    S.wind_bearing_deg = args.direction
+    S.wind_bearing_deg = direction
     S.v_ref = 50.0
     S.validate()
     mesh, thickness = build_full_mesh(S)
@@ -481,6 +486,14 @@ if __name__ == "__main__":
     # Save the mesh used for this wind analysis.
     with open("out/wind_mesh.pkl", "wb") as f:
         pickle.dump(mesh, f)
+
+    metadata = {
+    "wind_direction_deg": float(S.wind_bearing_deg),
+    "v_ref": float(S.v_ref)
+}
+
+with open("out/wind_metadata.json", "w") as f:
+    json.dump(metadata, f, indent=4)    
 
     print("\nWind analysis completed.")
     print("Results saved to out/res_W.pkl")

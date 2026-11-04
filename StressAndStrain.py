@@ -73,6 +73,7 @@ import os
 import pickle
 import re
 import warnings
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
@@ -510,15 +511,55 @@ def validate_gravity_wind_pair(
         if wind_mesh.n_nodes != wind.displacements.shape[0]:
             raise ValueError(f"wind mesh has {wind_mesh.n_nodes} nodes but wind results have {wind.displacements.shape[0]}")
 
+    # ---------------------------------------------------------
+# Strict gravity-wind mesh identity validation
+# ---------------------------------------------------------
+
     if mesh is not None and wind_mesh is not None:
+
+        # 1. Node coordinates and ordering
         if not np.array_equal(mesh.nodes, wind_mesh.nodes):
-            raise ValueError("Gravity and wind mesh node coordinates do not match")
+            raise ValueError(
+                "MESH MISMATCH: Gravity and wind node coordinates "
+                "or node ordering differ."
+            )
+
+        # 2. Element connectivity and ordering
         if not np.array_equal(mesh.elems, wind_mesh.elems):
-            raise ValueError("Gravity and wind mesh element connectivity does not match")
+            raise ValueError(
+                "MESH MISMATCH: Gravity and wind element connectivity "
+                "or element ordering differ."
+            )
+
+        # 3. Element groups
         if not np.array_equal(mesh.elem_group, wind_mesh.elem_group):
-            raise ValueError("Gravity and wind mesh element groups do not match")
+            raise ValueError(
+                "MESH MISMATCH: Element group assignments differ."
+            )
+
+        # 4. Group names and their ordering
         if mesh.group_names != wind_mesh.group_names:
-            raise ValueError("Gravity and wind mesh group names do not match")
+            raise ValueError(
+                "MESH MISMATCH: Element group names or ordering differ."
+            )
+
+        # 5. Node sets and their assignments
+        if set(mesh.node_sets.keys()) != set(wind_mesh.node_sets.keys()):
+            raise ValueError(
+                "MESH MISMATCH: Gravity and wind node-set names differ."
+            )
+
+        for name in mesh.node_sets:
+            if not np.array_equal(
+                mesh.node_sets[name],
+                wind_mesh.node_sets[name]
+            ):
+                raise ValueError(
+                    f"MESH MISMATCH: Node set '{name}' differs "
+                    "between gravity and wind meshes."
+                )
+
+        print("SUCCESS: Gravity and wind meshes match exactly.")
 
 
 # ----------------------------------------------------------------------------
@@ -1049,21 +1090,34 @@ def _main():
 
     a = ap.parse_args()
 
-    # Load input data
-    g = load_solve_result(a.gravity)
-    n = g.stress_outer.shape[0]
+    # ---------------------------------------------------------
+# Load results and BOTH meshes
+# ---------------------------------------------------------
 
-    mesh = load_mesh(a.mesh) if a.mesh and os.path.isfile(a.mesh) else None
+    g = load_solve_result(a.gravity)
+    w = load_solve_result(a.wind)
+
+# Gravity mesh must exist
+    if not a.mesh or not os.path.isfile(a.mesh):
+        raise FileNotFoundError(
+            f"Gravity mesh not found: {a.mesh}"
+        )
+
+# Wind mesh must exist
+    if not a.wind_mesh or not os.path.isfile(a.wind_mesh):
+        raise FileNotFoundError(
+            f"Wind mesh not found: {a.wind_mesh}"
+        )
+
+    mesh = load_mesh(a.mesh)
+    wind_mesh = load_mesh(a.wind_mesh)
+
+    n = g.stress_outer.shape[0]
 
     mat = MaterialProps.from_inp(a.inp, n)
 
-    w = load_solve_result(a.wind)
-    if not a.wind_mesh or not os.path.isfile(a.wind_mesh):
-        raise FileNotFoundError(
-            f"Wind mesh not found: {a.wind_mesh}. It is required to verify that "
-            "the gravity and wind results use identical meshes."
-        )
-    wind_mesh = load_mesh(a.wind_mesh)
+    print(f"Gravity mesh: {mesh.n_nodes} nodes, {mesh.n_elems} elements")
+    print(f"Wind mesh:    {wind_mesh.n_nodes} nodes, {wind_mesh.n_elems} elements")
 
     # Calculate stress and strain ONCE
     res = calculate_stress_and_strain(
@@ -1102,14 +1156,23 @@ def _main():
     }
 
     os.makedirs("out", exist_ok=True)
+
+    with open("out/wind_metadata.json", "r") as f:
+         wind_metadata = json.load(f)
+
+    wind_direction = float(wind_metadata["wind_direction_deg"])
+
     arrays["wind_speed"] = np.array(res.wind_speed)
     arrays["v_ref"] = np.array(res.v_ref)
-    arrays["wind_direction"] = np.array(res.wind_direction)
+    arrays["wind_direction"] = np.array(wind_direction)
 
-    np.savez_compressed(
-        "out/stress_strain_results.npz",
-        **arrays
-    )
+    npz_path = a.save_npz or "out/stress_strain_results.npz"
+
+    os.makedirs(os.path.dirname(os.path.abspath(npz_path)), exist_ok=True)
+
+    np.savez_compressed(npz_path, **arrays)
+
+    print(f"\nSaved {len(arrays)} arrays to {npz_path}")
 
     print(f"\nSaved {len(arrays)} arrays to out/stress_strain_results.npz")
 

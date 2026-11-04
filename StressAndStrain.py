@@ -1028,6 +1028,8 @@ def _main():
 
     ap.add_argument("--speed", type=float, default=0.0,
                     help="wind speed v in m/s")
+    
+    
 
     ap.add_argument("--strain-model", default="plane_stress",
                     choices=STRAIN_MODELS)
@@ -1065,10 +1067,11 @@ def _main():
 
     # Calculate stress and strain ONCE
     res = calculate_stress_and_strain(
-        g, w, a.speed, mat,
-        strain_model=a.strain_model,
-        mesh=mesh,
-        wind_mesh=wind_mesh
+    g, w, a.speed, mat,
+    
+    strain_model=a.strain_model,
+    mesh=mesh,
+    wind_mesh=wind_mesh
     )
 
     # Print summary
@@ -1099,6 +1102,9 @@ def _main():
     }
 
     os.makedirs("out", exist_ok=True)
+    arrays["wind_speed"] = np.array(res.wind_speed)
+    arrays["v_ref"] = np.array(res.v_ref)
+    arrays["wind_direction"] = np.array(res.wind_direction)
 
     np.savez_compressed(
         "out/stress_strain_results.npz",

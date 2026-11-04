@@ -188,8 +188,8 @@ def plot_stress_component(
         "yy": (1, "Stress YY"),
         "zz": (2, "Stress ZZ"),
         "xy": (3, "Shear Stress XY"),
-        "yz": (4, "Shear Stress YZ"),
-        "zx": (5, "Shear Stress ZX"),
+        "xz": (4, "Shear Stress YZ"),
+        "yz": (5, "Shear Stress ZX"),
     }
 
     if component not in components:
@@ -343,8 +343,8 @@ def plot_strain_component(
 
     shear_components = {
         "xy": (0, "Engineering Shear Strain XY"),
-        "yz": (1, "Engineering Shear Strain YZ"),
-        "zx": (2, "Engineering Shear Strain ZX"),
+        "xz": (1, "Engineering Shear Strain YZ"),
+        "yz": (2, "Engineering Shear Strain ZX"),
     }
 
     if component in normal_components:

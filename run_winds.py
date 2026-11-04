@@ -9,6 +9,7 @@ Run after confirming that the mesh generation and gravity case work.
 
 import os
 import pickle
+import argparse
 
 import gmsh
 import numpy as np
@@ -70,8 +71,20 @@ if __name__ == "__main__":
 
     os.makedirs("out", exist_ok=True)
 
-    # Always generate a fresh mesh.
+    # USER WIND INPUTS
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--direction", type=float, default=0.0,
+                        help="Wind direction in degrees")
+
+    
+
+    args = parser.parse_args()
+
+    # Apply user inputs
     S = Settings()
+    S.wind_bearing_deg = args.direction
+    S.v_ref = 50.0
     S.validate()
     mesh, thickness = build_full_mesh(S)
 

@@ -1,310 +1,96 @@
-"""Interactive Gmsh/PyVista viewport for the built-in wind turbine model."""
+"""Interactive PyVista viewport for the built-in wind turbine.
 
+Gmsh runs in a separate process (geometry_job.py). A QThread only watches that
+process, so the GUI never blocks and Gmsh's global state stays out of the app.
+"""
 from __future__ import annotations
 
 import json
-import time
+import multiprocessing as mp
+import queue as queue_mod
 import traceback
 from pathlib import Path
 
-import gmsh
-import numpy as np
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from geometry.default_generator import build_default
-
+import parameters as P
+from gui.components.geometry_job import run_job
 
 COMPONENT_COLORS = {
-    "Tower": "#718096",
-    "Nacelle": "#D6DEE8",
-    "Hub": "#00B8D9",
+    "Tower": "#9A8873",
+    "Nacelle": "#D6CFC4",
+    "Hub": "#B5A28B",
     "Blade 1": "#E6A23C",
-    "Blade 2": "#69B578",
+    "Blade 2": "#7FA38A",
     "Blade 3": "#A78BFA",
 }
+BACKGROUND = "#171614"
 
 
-class GeometryWorker(QObject):
+class JobWatcher(QObject):
+    """Starts the geometry process and relays its messages as Qt signals."""
 
     progress = Signal(str)
     succeeded = Signal(object)
     failed = Signal(str)
+    finished = Signal()
 
-    def __init__(self, params):
+    def __init__(self, config):
         super().__init__()
-        self.params = params
+        self.config = config
+        self._cancel = False
+        self._process = None
+
+    def cancel(self):
+        self._cancel = True
+        proc = self._process
+        if proc is not None and proc.is_alive():
+            proc.terminate()
 
     @Slot()
     def run(self):
-
-        start_time = time.time()
-
         try:
-            self.progress.emit("Initializing Gmsh...")
+            ctx = mp.get_context("spawn")
+            q = ctx.Queue()
+            proc = ctx.Process(target=run_job, args=(self.config, q), daemon=True)
+            self._process = proc
+            proc.start()
 
-            if not gmsh.isInitialized():
-                raise RuntimeError(
-                    "Gmsh was not initialized in the main thread."
-                )
-
-            gmsh.clear()
-
-            gmsh.option.setNumber("General.Terminal", 1)
-
-            # -----------------------------------------
-            # BUILD GEOMETRY
-            # -----------------------------------------
-
-            self.progress.emit("Building turbine surfaces...")
-
-            geometry_start = time.time()
-
-            groups, _thickness = build_default(self.params)
-
-            geometry_time = time.time() - geometry_start
-
-            self.progress.emit(
-                f"Geometry created in {geometry_time:.1f} seconds."
-            )
-
-            # -----------------------------------------
-            # VISUALIZATION MESH SETTINGS
-            # -----------------------------------------
-
-            self.progress.emit(
-                "Preparing visualization mesh..."
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.ElementOrder", 1
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.MeshSizeMin", 4.0
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.MeshSizeMax", 8.0
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.MeshSizeFromCurvature", 0
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.MeshSizeExtendFromBoundary", 0
-            )
-
-            gmsh.option.setNumber(
-                "Mesh.Algorithm", 6
-            )
-
-            points_entities = gmsh.model.getEntities(0)
-
-            if points_entities:
-                gmsh.model.mesh.setSize(
-                    points_entities,
-                    8.0
-                )
-
-            # -----------------------------------------
-            # GENERATE SURFACE MESH
-            # -----------------------------------------
-
-            self.progress.emit(
-                "Generating coarse visualization surface mesh..."
-            )
-
-            mesh_start = time.time()
-
-            gmsh.model.mesh.generate(2)
-
-            mesh_time = time.time() - mesh_start
-
-            self.progress.emit(
-                f"Surface mesh generated in {mesh_time:.1f} seconds."
-            )
-
-            # -----------------------------------------
-            # EXTRACT NODES
-            # -----------------------------------------
-
-            self.progress.emit(
-                "Extracting mesh nodes..."
-            )
-
-            node_tags, coordinates, _ = (
-                gmsh.model.mesh.getNodes()
-            )
-
-            if len(node_tags) == 0:
-                raise RuntimeError(
-                    "Gmsh generated no mesh nodes."
-                )
-
-            points = np.asarray(
-                coordinates,
-                dtype=np.float64
-            ).reshape((-1, 3))
-
-            node_index = {
-                int(tag): index
-                for index, tag in enumerate(node_tags)
-            }
-
-            # -----------------------------------------
-            # COMPONENT GROUPS
-            # -----------------------------------------
-
-            group_map = {
-                "Tower": [
-                    name for name in groups
-                    if name.startswith("Tower_")
-                ],
-                "Nacelle": ["Nacelle"],
-                "Hub": ["Hub"],
-                "Blade 1": ["Blade_1"],
-                "Blade 2": ["Blade_2"],
-                "Blade 3": ["Blade_3"],
-            }
-
-            result = {}
-            total_cells = 0
-
-            # -----------------------------------------
-            # EXTRACT COMPONENT ELEMENTS
-            # -----------------------------------------
-
-            self.progress.emit(
-                "Extracting component surface elements..."
-            )
-
-            for component, group_names in group_map.items():
-
-                component_cells = []
-                component_types = []
-
-                for group_name in group_names:
-
-                    surface_tags = groups.get(
-                        group_name,
-                        []
-                    )
-
-                    for surface_tag in surface_tags:
-
-                        element_types, _, element_node_tags = (
-                            gmsh.model.mesh.getElements(
-                                2,
-                                int(surface_tag)
-                            )
+            while not self._cancel:
+                try:
+                    kind, data = q.get(timeout=0.2)
+                except queue_mod.Empty:
+                    if proc.is_alive():
+                        continue
+                    try:                       # process ended, drain once
+                        kind, data = q.get(timeout=0.5)
+                    except queue_mod.Empty:
+                        self.failed.emit(
+                            "The geometry process stopped unexpectedly "
+                            f"(exit code {proc.exitcode})."
                         )
+                        break
 
-                        for element_type, connectivity in zip(
-                            element_types,
-                            element_node_tags
-                        ):
+                if kind == "progress":
+                    self.progress.emit(data)
+                elif kind == "done":
+                    self.succeeded.emit(data)
+                    break
+                elif kind == "error":
+                    self.failed.emit(data)
+                    break
 
-                            properties = (
-                                gmsh.model.mesh.getElementProperties(
-                                    int(element_type)
-                                )
-                            )
-
-                            element_dim = properties[1]
-                            num_nodes = properties[3]
-
-                            if element_dim != 2:
-                                continue
-
-                            if num_nodes not in (3, 4):
-                                continue
-
-                            conn = np.asarray(
-                                connectivity,
-                                dtype=np.int64
-                            ).reshape((-1, num_nodes))
-
-                            for row in conn:
-
-                                try:
-                                    indices = [
-                                        node_index[int(tag)]
-                                        for tag in row
-                                    ]
-
-                                except KeyError:
-                                    continue
-
-                                component_cells.append(
-                                    [num_nodes, *indices]
-                                )
-
-                                component_types.append(
-                                    int(
-                                        pv.CellType.TRIANGLE
-                                        if num_nodes == 3
-                                        else pv.CellType.QUAD
-                                    )
-                                )
-
-                if component_cells:
-
-                    flat_cells = np.asarray(
-                        [
-                            value
-                            for cell in component_cells
-                            for value in cell
-                        ],
-                        dtype=np.int64
-                    )
-
-                    cell_types = np.asarray(
-                        component_types,
-                        dtype=np.uint8
-                    )
-
-                    result[component] = (
-                        points,
-                        flat_cells,
-                        cell_types
-                    )
-
-                    total_cells += len(component_types)
-
-            if not result:
-
-                raise RuntimeError(
-                    "No displayable surface elements were found. "
-                    "The geometry groups may contain invalid surface tags."
-                )
-
-            total_time = time.time() - start_time
-
-            self.succeeded.emit({
-                "components": result,
-                "total_cells": total_cells,
-                "generation_time": total_time,
-            })
-
+            proc.join(timeout=5)
+            if proc.is_alive():
+                proc.terminate()
         except Exception:
-
-            self.failed.emit(
-                traceback.format_exc()
-            )
-
+            self.failed.emit(traceback.format_exc())
         finally:
-
-            try:
-                if gmsh.isInitialized():
-                    gmsh.clear()
-
-            except Exception:
-                pass
+            self.finished.emit()
 
 
 class TurbineViewport(QWidget):
@@ -313,589 +99,190 @@ class TurbineViewport(QWidget):
     component_selected = Signal(str)
 
     def __init__(self, project_data=None, parent=None):
-
         super().__init__(parent)
-
         self.project_data = project_data or {}
 
         self.plotter = None
         self.actors = {}
         self.component_meshes = {}
-
         self.geometry_loaded = False
         self.loading = False
-
         self._thread = None
         self._worker = None
 
         self.setMinimumSize(400, 350)
-
-        self.setStyleSheet(
-            "background-color: #17191D;"
-        )
+        self.setStyleSheet(f"background-color: {BACKGROUND};")
 
         self.layout = QVBoxLayout(self)
-
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        self.message_label = QLabel(
-            "Open Geometry to generate the turbine model."
-        )
-
-        self.message_label.setAlignment(
-            Qt.AlignCenter
-        )
-
+        self.message_label = QLabel("Open Geometry to generate the turbine model.")
+        self.message_label.setAlignment(Qt.AlignCenter)
         self.message_label.setWordWrap(True)
-
         self.message_label.setStyleSheet(
-            "color: #A5ABB4;"
-            "background-color: #17191D;"
-            "padding: 12px;"
+            f"color: #B0A593; background-color: {BACKGROUND}; padding: 12px;"
         )
+        self.layout.addWidget(self.message_label)
 
-        self.layout.addWidget(
-            self.message_label
-        )
-
-    # ==================================================
-    # START GEOMETRY GENERATION
-    # ==================================================
+    # ------------------------------------------------------------------
+    def reload(self):
+        """Rebuild after the parameters changed."""
+        if self.loading:
+            return
+        self.geometry_loaded = False
+        self.ensure_geometry_loaded()
 
     def ensure_geometry_loaded(self):
-
         if self.geometry_loaded or self.loading:
             return
 
         try:
-            params = self._load_parameters()
-
+            config = self._load_config()
         except Exception as exc:
-
+            self.message_label.show()
             self.message_label.setText(
-                "Could not load turbine parameters.\n\n"
-                f"{type(exc).__name__}: {exc}"
+                f"Could not prepare the turbine parameters.\n\n{exc}"
             )
-
-            self.status_message.emit(
-                f"Parameter loading failed: {exc}"
-            )
-
+            self.status_message.emit(f"Parameter problem: {exc}")
             return
 
         self.loading = True
-
-        # Gmsh must be initialized in the main Python thread.
-        try:
-                if not gmsh.isInitialized():
-                    gmsh.initialize()
-
-        except Exception as exc:
-            self.loading = False
-
-            self.message_label.setText(
-                "Could not initialize Gmsh.\n\n"
-                f"{type(exc).__name__}: {exc}"
-            )
-
-            self.status_message.emit(
-                f"Gmsh initialization failed: {exc}"
-            )
-
-            return
-
         self.message_label.show()
-
-        self.message_label.setText(
-            "Generating turbine geometry and surface mesh...\n\n"
-            "Please wait."
-        )
-
-        self.status_message.emit(
-            "Starting turbine geometry generation..."
-        )
+        self.message_label.setText("Generating turbine geometry...\n\nPlease wait.")
+        self.status_message.emit("Starting turbine geometry generation...")
 
         self._thread = QThread(self)
-
-        self._worker = GeometryWorker(params)
-
-        self._worker.moveToThread(
-            self._thread
-        )
-
-        self._thread.started.connect(
-            self._worker.run
-        )
-
-        self._worker.progress.connect(
-            self._on_worker_progress
-        )
-
-        self._worker.succeeded.connect(
-            self._on_geometry_ready
-        )
-
-        self._worker.failed.connect(
-            self._on_geometry_failed
-        )
-
-        self._worker.succeeded.connect(
-            self._thread.quit
-        )
-
-        self._worker.failed.connect(
-            self._thread.quit
-        )
-
-        self._thread.finished.connect(
-            self._worker.deleteLater
-        )
-
-        self._thread.finished.connect(
-            self._on_thread_finished
-        )
-
+        self._worker = JobWatcher(config)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.succeeded.connect(self._on_geometry_ready)
+        self._worker.failed.connect(self._on_geometry_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
 
-    # ==================================================
-    # LOAD PARAMETERS
-    # ==================================================
-
-    def _load_parameters(self):
-
-        project_path = self.project_data.get(
-            "project_path"
-        )
-
-        model_config_path = None
-
-        if project_path:
-
-            model_config_path = (
-                Path(project_path)
-                / "config"
-                / "model_config.json"
-            )
-
+    # ------------------------------------------------------------------
+    def _load_config(self):
+        project_path = self.project_data.get("project_path")
         model_config = {}
+        if project_path:
+            path = Path(project_path) / "config" / "model_config.json"
+            if path.exists():
+                model_config = json.loads(path.read_text(encoding="utf-8"))
 
-        if (
-            model_config_path
-            and model_config_path.exists()
-        ):
-
-            with model_config_path.open(
-                "r",
-                encoding="utf-8"
-            ) as file:
-
-                model_config = json.load(file)
-
-        model_source = model_config.get(
-            "model_source",
-            self.project_data.get(
-                "model_source",
-                "builtin"
-            )
+        source = model_config.get(
+            "model_source", self.project_data.get("model_source", "builtin")
         )
+        if source == "step":
+            raise NotImplementedError("STEP viewport loading is not integrated yet.")
 
-        if model_source == "step":
-
-            raise NotImplementedError(
-                "STEP viewport loading has not been integrated yet."
+        values = P.default_values()
+        dims = model_config.get("dimensions") or self.project_data.get("dimensions")
+        if isinstance(dims, dict) and "tower_height" in dims:
+            values.update({k: float(v) for k, v in dims.items() if k in values})
+        elif dims:
+            self.status_message.emit(
+                "This project uses the old dimension format. Default turbine shown."
             )
 
-        root = Path(__file__).resolve().parents[2]
+        errors, warnings = P.validate(values)
+        if errors:
+            raise ValueError("; ".join(errors))
+        for w in warnings:
+            self.status_message.emit(f"Warning: {w}")
+        return P.apply_to_config(values)
 
-        json_path = (
-            root
-            / "data"
-            / "default_turbine.json"
-        )
-
-        raw = json_path.read_text(
-            encoding="utf-8"
-        ).replace("\u00a0", " ")
-
-        params = json.loads(raw)
-
-        dimensions = (
-            model_config.get("dimensions")
-            or self.project_data.get("dimensions")
-        )
-
-        if dimensions:
-
-            self._apply_dialog_dimensions(
-                params,
-                dimensions
-            )
-
-        return params
-
-    # ==================================================
-    # APPLY USER DIMENSIONS
-    # ==================================================
-
-    @staticmethod
-    def _apply_dialog_dimensions(params, dimensions):
-
-        tower = dimensions.get("tower", {})
-
-        sections = params["tower"]["sections"]
-
-        if sections and tower:
-
-            old_height = sections[-1]["z1"]
-
-            new_height = float(
-                tower.get("height", old_height)
-            )
-
-            base_d = float(
-                tower.get(
-                    "base_diameter",
-                    sections[0]["d0"]
-                )
-            )
-
-            top_d = float(
-                tower.get(
-                    "top_diameter",
-                    sections[-1]["d1"]
-                )
-            )
-
-            wall_t = float(
-                tower.get(
-                    "thickness",
-                    sections[0]["t"]
-                )
-            )
-
-            for section in sections:
-
-                f0 = (
-                    section["z0"] / old_height
-                    if old_height else 0.0
-                )
-
-                f1 = (
-                    section["z1"] / old_height
-                    if old_height else 1.0
-                )
-
-                section["z0"] = f0 * new_height
-                section["z1"] = f1 * new_height
-
-                section["d0"] = (
-                    base_d + (top_d - base_d) * f0
-                )
-
-                section["d1"] = (
-                    base_d + (top_d - base_d) * f1
-                )
-
-                section["t"] = wall_t
-
-        # NACELLE
-
-        nacelle = dimensions.get("nacelle", {})
-
-        if nacelle:
-
-            nac = params["nacelle"]
-
-            old_center = (
-                nac["y_rear"] + nac["y_front"]
-            ) / 2
-
-            length = float(
-                nacelle.get(
-                    "length",
-                    nac["y_front"] - nac["y_rear"]
-                )
-            )
-
-            nac["y_rear"] = old_center - length / 2
-            nac["y_front"] = old_center + length / 2
-
-            nac["width"] = float(
-                nacelle.get("width", nac["width"])
-            )
-
-            nac["height"] = float(
-                nacelle.get("height", nac["height"])
-            )
-
-        # ROTOR AND BLADES
-
-        rotor = dimensions.get("rotor", {})
-
-        if rotor:
-
-            params["hub"]["diameter"] = float(
-                rotor.get(
-                    "hub_diameter",
-                    params["hub"]["diameter"]
-                )
-            )
-
-            stations = params["blade"]["stations"]
-
-            old_length = (
-                stations[-1]["r"] - stations[0]["r"]
-            )
-
-            new_length = float(
-                rotor.get(
-                    "blade_length",
-                    old_length
-                )
-            )
-
-            root_width = float(
-                rotor.get(
-                    "blade_root_width",
-                    stations[0]["chord"]
-                )
-            )
-
-            tip_width = float(
-                rotor.get(
-                    "blade_tip_width",
-                    stations[-1]["chord"]
-                )
-            )
-
-            root_thickness = float(
-                rotor.get(
-                    "blade_thickness",
-                    stations[0]["thick"]
-                )
-            )
-
-            start_radius = stations[0]["r"]
-
-            for station in stations:
-
-                fraction = (
-                    (station["r"] - start_radius) / old_length
-                    if old_length else 0.0
-                )
-
-                station["r"] = (
-                    start_radius + fraction * new_length
-                )
-
-                station["chord"] = (
-                    root_width
-                    + fraction * (tip_width - root_width)
-                )
-
-                station["thick"] = (
-                    root_thickness
-                    + fraction * (
-                        min(tip_width * 0.18, root_thickness)
-                        - root_thickness
-                    )
-                )
-
-    # ==================================================
-    # PROGRESS
-    # ==================================================
-
+    # ------------------------------------------------------------------
     @Slot(str)
-    def _on_worker_progress(self, message):
-
-        self.message_label.setText(
-            "Generating turbine geometry...\n\n"
-            + message
-        )
-
-        self.status_message.emit(
-            message
-        )
-
-    # ==================================================
-    # DISPLAY GEOMETRY
-    # ==================================================
+    def _on_progress(self, message):
+        self.message_label.setText("Generating turbine geometry...\n\n" + message)
+        self.status_message.emit(message)
 
     @Slot(object)
     def _on_geometry_ready(self, payload):
-
         try:
-
             if self.plotter is None:
-
                 self.plotter = QtInteractor(self)
-
-                self.layout.addWidget(
-                    self.plotter.interactor
-                )
-
-                self.plotter.set_background(
-                    "#17191D"
-                )
+                self.layout.addWidget(self.plotter.interactor)
+                self.plotter.set_background(BACKGROUND)
 
             self.plotter.clear()
-
             self.actors.clear()
             self.component_meshes.clear()
 
-            for component, (
-                points,
-                flat_cells,
-                cell_types
-            ) in payload["components"].items():
-
-                mesh = pv.UnstructuredGrid(
-                    flat_cells,
-                    cell_types,
-                    points
-                )
-
+            points = payload["points"]
+            for component, faces in payload["components"].items():
+                mesh = pv.PolyData(points, faces)
                 self.component_meshes[component] = mesh
-
-                actor = self.plotter.add_mesh(
+                self.actors[component] = self.plotter.add_mesh(
                     mesh,
-                    color=COMPONENT_COLORS.get(
-                        component,
-                        "#A0A0A0"
-                    ),
+                    color=COMPONENT_COLORS.get(component, "#A0A0A0"),
                     smooth_shading=True,
                     show_edges=False,
-                    opacity=1.0,
-                    name=component
+                    name=component,
                 )
 
-                self.actors[component] = actor
-
-            self.plotter.add_axes(
-                line_width=2
-            )
-
+            self.plotter.add_axes(line_width=2)
             self.plotter.show_grid(
-                color="#59616B",
-                xlabel="X (m)",
-                ylabel="Y (m)",
-                zlabel="Z (m)"
+                color="#59616B", xlabel="X (m)", ylabel="Y (m)", zlabel="Z (m)"
             )
-
             self.plotter.view_isometric()
-
             self.plotter.reset_camera()
-
             self.plotter.render()
 
             self.message_label.hide()
-
             self.geometry_loaded = True
-
             self.status_message.emit(
-                "3D turbine model displayed successfully. "
+                "3D turbine model displayed. "
                 f"Components: {len(self.actors)} | "
                 f"Surface cells: {payload['total_cells']:,} | "
-                f"Time: {payload['generation_time']:.1f} seconds."
+                f"Time: {payload['generation_time']:.1f} s."
             )
-
         except Exception:
-
-            self._on_geometry_failed(
-                traceback.format_exc()
-            )
-
-    # ==================================================
-    # ERROR HANDLING
-    # ==================================================
+            self._on_geometry_failed(traceback.format_exc())
 
     @Slot(str)
     def _on_geometry_failed(self, error_text):
-
-        self.loading = False
         self.geometry_loaded = False
-
         lines = error_text.strip().splitlines()
-
-        short_error = (
-            lines[-1]
-            if lines
-            else "Unknown error"
-        )
-
+        short = lines[-1] if lines else "Unknown error"
         self.message_label.show()
-
         self.message_label.setText(
-            "Could not generate the 3D turbine model.\n\n"
-            f"{short_error}\n\n"
-            "Check the VS Code terminal for details."
+            f"Could not generate the 3D turbine model.\n\n{short}"
         )
-
-        self.status_message.emit(
-            f"Geometry generation failed: {short_error}"
-        )
-
-        print(
-            "\n--- Geometry generation traceback ---\n"
-        )
-
+        self.status_message.emit(f"Geometry generation failed: {short}")
+        print("\n--- Geometry generation traceback ---\n")
         print(error_text)
 
     @Slot()
     def _on_thread_finished(self):
-
         self.loading = False
         self._thread = None
         self._worker = None
 
-    # ==================================================
-    # COMPONENT SELECTION
-    # ==================================================
-
+    # ------------------------------------------------------------------
     def select_component(self, component_name):
-
         if not self.actors or self.plotter is None:
             return
-
-        selected = (
-            component_name
-            if component_name in self.actors
-            else None
-        )
-
+        selected = component_name if component_name in self.actors else None
         for name, actor in self.actors.items():
-
             actor.GetProperty().SetOpacity(
                 1.0 if selected in (None, name) else 0.22
             )
-
         self.plotter.render()
-
         if selected:
-
-            self.component_selected.emit(
-                selected
-            )
-
-    # ==================================================
-    # CLEANUP
-    # ==================================================
+            self.component_selected.emit(selected)
 
     def closeEvent(self, event):
-
-        if (
-            self._thread is not None
-            and self._thread.isRunning()
-        ):
-
-            # Do not destroy a running QThread.
-# Wait until the geometry worker finishes.
-            self._thread.wait()
-                
+        if self._worker is not None:
+            self._worker.cancel()
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
         if self.plotter is not None:
-
             self.plotter.close()
             self.plotter = None
-
         super().closeEvent(event)

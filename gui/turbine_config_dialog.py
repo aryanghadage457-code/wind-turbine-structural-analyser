@@ -1,259 +1,181 @@
-"""Turbine configuration dialog for the built-in model.
+"""Turbine configuration dialog, built from Member 1's parameters.py.
 
-Result (unchanged): dialog.dimensions = {"tower": {...}, "nacelle": {...},
-"rotor": {...}}, filled when the user presses Generate Geometry.
-
-Note: these fields do not yet match Member 1's 12 parameters. That is
-handled in the integration phase; this file is restyled only.
+dialog.dimensions is a flat dict {field_name: value} using Member 1's 12
+field names. main.py saves it unchanged into config/model_config.json.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog,
-    QDoubleSpinBox,
-    QFormLayout,
-    QFrame,
-    QGroupBox,
-    QLabel,
-    QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
+    QDialog, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+    QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from gui.components.dialog_parts import make_footer, make_header
+import parameters as P
+
+
+def _get(spec, name, default=None):
+    if isinstance(spec, dict):
+        return spec.get(name, default)
+    return getattr(spec, name, default)
+
+
+def _parameter_specs():
+    """Return [(field_name, spec)] whatever shape P.PARAMETERS has."""
+    raw = P.PARAMETERS
+    specs = []
+    if isinstance(raw, dict):
+        for key, spec in raw.items():
+            specs.append((key, spec))
+    else:
+        for spec in raw:
+            key = (_get(spec, "name") or _get(spec, "key")
+                   or _get(spec, "id") or _get(spec, "field"))
+            specs.append((key, spec))
+    return specs
 
 
 class TurbineConfigDialog(QDialog):
 
     def __init__(self, parent=None):
-
         super().__init__(parent)
-
         self.setWindowTitle("Turbine Configuration")
         self.setMinimumSize(580, 700)
 
         self.dimensions = {}
+        self._inputs = {}
 
-        self.create_interface()
+        self._build()
+        self._revalidate()
 
-    # ==========================================
-    # INTERFACE
-    # ==========================================
-
-    def create_interface(self):
-
+    # ------------------------------------------------------------------
+    def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(
-            make_header(
-                "sliders",
-                "Turbine Dimensions",
-                "Customise the dimensions of your wind turbine. "
-                "All dimensions are in metres."
-            )
-        )
+        # header
+        header = QFrame()
+        header.setObjectName("DialogHeader")
+        hl = QVBoxLayout(header)
+        hl.setContentsMargins(24, 18, 24, 18)
+        title = QLabel("Turbine Dimensions")
+        title.setObjectName("DialogTitle")
+        subtitle = QLabel("Built-in turbine. Lengths in metres, angles in degrees.")
+        subtitle.setObjectName("HintText")
+        hl.addWidget(title)
+        hl.addWidget(subtitle)
+        root.addWidget(header)
 
-        # Scrollable body
+        # scrolling form, one group box per parameter group
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-        )
-
         content = QWidget()
-        content.setObjectName("ConfigContent")
-        content.setStyleSheet(
-            "QWidget#ConfigContent { background: transparent; }"
-        )
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(24, 18, 24, 18)
+        cl.setSpacing(14)
 
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(26, 18, 18, 18)
-        layout.setSpacing(6)
+        defaults = P.default_values()
+        forms = {}
+        for key, spec in _parameter_specs():
+            group = _get(spec, "group", "Parameters")
+            if group not in forms:
+                box = QGroupBox(str(group))
+                forms[group] = QFormLayout(box)
+                cl.addWidget(box)
 
-        # ---------------- Tower ----------------
-        self.tower_height = self.create_input(80, 200, 100)
-        self.tower_base = self.create_input(2, 10, 5)
-        self.tower_top = self.create_input(1, 8, 3)
-        self.tower_thickness = self.create_input(0.02, 0.5, 0.05)
+            spin = QDoubleSpinBox()
+            lo = _get(spec, "min")
+            hi = _get(spec, "max")
+            spin.setRange(-1e9 if lo is None else float(lo),
+                          1e9 if hi is None else float(hi))
+            spin.setDecimals(3)
+            spin.setSingleStep(0.1)
+            unit = _get(spec, "unit", "")
+            if unit:
+                spin.setSuffix(f" {unit}")
+            help_text = _get(spec, "help", "")
+            if help_text:
+                spin.setToolTip(str(help_text))
+            spin.setValue(float(defaults.get(key, _get(spec, "default", 0.0))))
+            spin.valueChanged.connect(self._revalidate)
 
-        layout.addWidget(self.create_group("Tower", [
-            ("Height", self.tower_height),
-            ("Base diameter", self.tower_base),
-            ("Top diameter", self.tower_top),
-            ("Wall thickness", self.tower_thickness),
-        ]))
+            forms[group].addRow(str(_get(spec, "label", key)) + ":", spin)
+            self._inputs[key] = spin
 
-        # ---------------- Nacelle ----------------
-        self.nacelle_length = self.create_input(2, 20, 12)
-        self.nacelle_width = self.create_input(1, 8, 4)
-        self.nacelle_height = self.create_input(1, 8, 4)
-
-        layout.addWidget(self.create_group("Nacelle", [
-            ("Length", self.nacelle_length),
-            ("Width", self.nacelle_width),
-            ("Height", self.nacelle_height),
-        ]))
-
-        # ---------------- Hub and blades ----------------
-        self.hub_diameter = self.create_input(1, 8, 3)
-        self.blade_length = self.create_input(10, 100, 50)
-        self.blade_root_width = self.create_input(0.5, 5, 3)
-        self.blade_tip_width = self.create_input(0.1, 3, 0.5)
-        self.blade_thickness = self.create_input(0.05, 1, 0.3)
-
-        layout.addWidget(self.create_group("Hub and Blades", [
-            ("Hub diameter", self.hub_diameter),
-            ("Blade length", self.blade_length),
-            ("Blade root width", self.blade_root_width),
-            ("Blade tip width", self.blade_tip_width),
-            ("Blade thickness", self.blade_thickness),
-        ]))
-
-        layout.addStretch()
-
+        cl.addStretch()
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
 
-        # ---------------- Footer ----------------
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
+        # messages
+        msg = QFrame()
+        ml = QVBoxLayout(msg)
+        ml.setContentsMargins(24, 6, 24, 6)
+        self.error_label = QLabel()
+        self.error_label.setObjectName("ErrorText")
+        self.error_label.setWordWrap(True)
+        self.warning_label = QLabel()
+        self.warning_label.setObjectName("HintText")
+        self.warning_label.setWordWrap(True)
+        ml.addWidget(self.error_label)
+        ml.addWidget(self.warning_label)
+        root.addWidget(msg)
 
-        generate_button = QPushButton("Generate Geometry")
-        generate_button.setObjectName("PrimaryButton")
-        generate_button.setDefault(True)
-        generate_button.clicked.connect(self.save_dimensions)
+        # footer
+        footer = QFrame()
+        footer.setObjectName("DialogFooter")
+        fl = QHBoxLayout(footer)
+        fl.setContentsMargins(24, 12, 24, 12)
+        reset = QPushButton("Reset to Defaults")
+        reset.setObjectName("GhostButton")
+        reset.clicked.connect(self._reset)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        self.generate_button = QPushButton("Generate Geometry")
+        self.generate_button.setObjectName("PrimaryButton")
+        self.generate_button.setDefault(True)
+        self.generate_button.clicked.connect(self._accept)
+        fl.addWidget(reset)
+        fl.addStretch()
+        fl.addWidget(cancel)
+        fl.addWidget(self.generate_button)
+        root.addWidget(footer)
 
-        root.addWidget(make_footer(cancel_button, generate_button))
+    # ------------------------------------------------------------------
+    def _values(self):
+        return {key: spin.value() for key, spin in self._inputs.items()}
 
-    # ==========================================
-    # BUILDING BLOCKS
-    # ==========================================
+    def _revalidate(self, *_):
+        try:
+            errors, warnings = P.validate(self._values())
+        except Exception as exc:          # never crash the dialog
+            errors, warnings = [f"Validation failed: {exc}"], []
 
-    def create_group(self, title, rows):
+        self.error_label.setText("\n".join(f"\u2022 {e}" for e in errors))
+        self.error_label.setVisible(bool(errors))
+        self.warning_label.setText("\n".join(f"Note: {w}" for w in warnings))
+        self.warning_label.setVisible(bool(warnings))
+        self.generate_button.setEnabled(not errors)
 
-        group = QGroupBox(title)
+    def _reset(self):
+        defaults = P.default_values()
+        for key, spin in self._inputs.items():
+            if key in defaults:
+                spin.blockSignals(True)
+                spin.setValue(float(defaults[key]))
+                spin.blockSignals(False)
+        self._revalidate()
 
-        form = QFormLayout(group)
-        form.setHorizontalSpacing(24)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-        for text, widget in rows:
-
-            label = QLabel(text.upper())
-            label.setObjectName("FieldLabel")
-
-            form.addRow(label, widget)
-
-        return group
-
-    def create_input(
-        self,
-        minimum,
-        maximum,
-        default
-    ):
-
-        spin = QDoubleSpinBox()
-
-        spin.setRange(
-            minimum,
-            maximum
-        )
-
-        spin.setValue(default)
-
-        spin.setDecimals(3)
-
-        spin.setSingleStep(0.1)
-
-        spin.setSuffix(" m")
-
-        spin.setMinimumWidth(150)
-
-        return spin
-
-    # ==========================================
-    # VALIDATE AND SAVE DIMENSIONS
-    # ==========================================
-
-    def save_dimensions(self):
-
-        # Tower validation
-        if self.tower_base.value() <= self.tower_top.value():
-
-            QMessageBox.warning(
-
-                self,
-
-                "Invalid Tower Dimensions",
-
-                "Tower base diameter must be greater "
-                "than tower top diameter."
-
-            )
-
+    def _accept(self):
+        values = self._values()
+        try:
+            errors, _ = P.validate(values)
+            if errors:
+                self._revalidate()
+                return
+            P.apply_to_config(values)     # raises ValueError if invalid
+        except ValueError as exc:
+            self.error_label.setText(str(exc))
+            self.error_label.show()
             return
-
-        # Blade validation
-        if self.blade_root_width.value() <= self.blade_tip_width.value():
-
-            QMessageBox.warning(
-
-                self,
-
-                "Invalid Blade Dimensions",
-
-                "Blade root width must be greater "
-                "than blade tip width."
-
-            )
-
-            return
-
-        # Store dimensions
-        self.dimensions = {
-
-            "tower": {
-
-                "height": self.tower_height.value(),
-
-                "base_diameter": self.tower_base.value(),
-
-                "top_diameter": self.tower_top.value(),
-
-                "thickness": self.tower_thickness.value()
-
-            },
-
-            "nacelle": {
-
-                "length": self.nacelle_length.value(),
-
-                "width": self.nacelle_width.value(),
-
-                "height": self.nacelle_height.value()
-
-            },
-
-            "rotor": {
-
-                "hub_diameter": self.hub_diameter.value(),
-
-                "blade_length": self.blade_length.value(),
-
-                "blade_root_width": self.blade_root_width.value(),
-
-                "blade_tip_width": self.blade_tip_width.value(),
-
-                "blade_thickness": self.blade_thickness.value()
-
-            }
-
-        }
-
+        self.dimensions = values
         self.accept()

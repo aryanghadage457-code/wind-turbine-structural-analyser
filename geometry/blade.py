@@ -1,171 +1,86 @@
-"""Blade generator (Member 1).
+"""Blade generator (Member 1). Simplified lofted blade, outer surface only.
+Blade axis is built pointing +Z from the hub centre, then rotated about the
+rotor axis (+Y) to make the copies. Units: metres, angles in degrees.
 
-Simplified lofted blade, outer surface only.
-Blade axis is built pointing +Z from the hub centre,
-then rotated about the rotor axis (+Y) to make copies.
-
-Units: metres.
-Angles: degrees.
+Optional leading-edge alignment (JSON keys in the "blade" block):
+  leading_edge_align    0.0 = sections centred on the blade axis (old shape),
+                        1.0 = straight leading edge, curved trailing edge.
+  leading_edge_start_r  radius (m) from where the alignment starts; stations
+                        inside it (root, cylinder) are not moved.
+  leading_edge_sign     +1: leading edge on the +chord-direction side,
+                        -1: on the other side (mirrors the shape sideways).
 """
-
 import math
 import gmsh
 
+occ = gmsh.model.occ
+
 
 def _section_wire(cx, cy, cz, chord, thick, twist_deg):
-    """Create a closed elliptical blade section."""
-
-    occ = gmsh.model.occ
-
-    angle = math.radians(twist_deg)
-
+    """Closed ellipse (circle if chord == thick) in a horizontal plane."""
+    a = math.radians(twist_deg)
     if abs(chord - thick) < 1e-9:
-
-        curve = occ.addCircle(
-            cx, cy, cz,
-            chord / 2,
-            zAxis=[0, 0, 1]
-        )
-
+        c = occ.addCircle(cx, cy, cz, chord / 2, zAxis=[0, 0, 1])
     else:
+        c = occ.addEllipse(cx, cy, cz, chord / 2, thick / 2,
+                           zAxis=[0, 0, 1], xAxis=[math.cos(a), math.sin(a), 0])
+    return occ.addWire([c]), c
 
-        curve = occ.addEllipse(
-            cx, cy, cz,
-            chord / 2,
-            thick / 2,
-            zAxis=[0, 0, 1],
-            xAxis=[
-                math.cos(angle),
-                math.sin(angle),
-                0
-            ]
-        )
 
-    wire = occ.addWire([curve])
-
-    return wire, curve
+def _chord_shifts(blade):
+    """Sideways shift (m, along each section's chord direction) per station.
+    Keeps the leading edge on a straight line from the start station outward."""
+    st = blade["stations"]
+    shifts = [0.0] * len(st)
+    align = float(blade.get("leading_edge_align", 0.0))
+    if align < 0.0 or align > 1.0:
+        raise ValueError("leading_edge_align must be between 0 and 1")
+    if align == 0.0:
+        return shifts
+    sign = 1 if float(blade.get("leading_edge_sign", 1)) >= 0 else -1
+    r0 = float(blade.get("leading_edge_start_r", 8.3333))
+    i0 = next((i for i, s in enumerate(st) if s["r"] >= r0 - 1e-9), None)
+    if i0 is None:
+        return shifts
+    ref = st[i0]["chord"]
+    for i in range(i0, len(st)):
+        shifts[i] = -sign * align * (st[i]["chord"] - ref) / 2.0
+    return shifts
 
 
 def build_blades(blade, hub_center):
-    """Generate all blade surfaces.
-
-    Returns:
-        List of lists containing surface tags.
-        blades[0] = Blade 1 surface tags
-        blades[1] = Blade 2 surface tags
-        blades[2] = Blade 3 surface tags
-    """
-
-    occ = gmsh.model.occ
-
+    """Returns list of surface tags for all blades (blade k = list k)."""
     hx, hy, hz = hub_center
+    st = blade["stations"]
+    shifts = _chord_shifts(blade)
 
-    stations = blade["stations"]
-
-    if len(stations) < 2:
-        raise ValueError(
-            "At least two blade stations are required."
-        )
-
-    blade_count = int(blade.get("count", 3))
-    azimuth = float(blade.get("azimuth_deg", 0.0))
-
-    if blade_count < 1:
-        raise ValueError(
-            "Blade count must be at least one."
-        )
+    def centre(i):
+        a = math.radians(st[i]["twist"])
+        return hx + shifts[i] * math.cos(a), hy + shifts[i] * math.sin(a), hz + st[i]["r"]
 
     wires = []
-    curves = []
-
-    # Create blade cross-sections.
-    for station in stations:
-
-        radius = float(station["r"])
-        chord = float(station["chord"])
-        thickness = float(station["thick"])
-        twist = float(station["twist"])
-
-        if chord <= 0 or thickness <= 0:
-            raise ValueError(
-                "Blade chord and thickness must be positive."
-            )
-
-        wire, curve = _section_wire(
-            hx,
-            hy,
-            hz + radius,
-            chord,
-            thickness,
-            twist
-        )
-
-        wires.append(wire)
-        curves.append(curve)
-
-    # Generate the blade loft.
-    loft = occ.addThruSections(
-        wires,
-        makeSolid=False,
-        makeRuled=True
-    )
-
-    # Create the tip cap using the existing final section curve.
-    tip_curve = curves[-1]
-
-    tip_loop = occ.addCurveLoop(
-        [tip_curve]
-    )
-
-    tip_surface = occ.addPlaneSurface(
-        [tip_loop]
-    )
-
-    # Keep lofted surfaces and the tip cap.
-    base_surfaces = [
-        (dim, tag)
-        for dim, tag in loft
-        if dim == 2
-    ]
-
-    base_surfaces.append(
-        (2, tip_surface)
-    )
-
+    for i, s in enumerate(st):
+        cx, cy, cz = centre(i)
+        w, _ = _section_wire(cx, cy, cz, s["chord"], s["thick"], s["twist"])
+        wires.append(w)
+    loft = occ.addThruSections(wires, makeSolid=False, makeRuled=True)
+    # tip cap (closed tip)
+    last = st[-1]
+    cx, cy, cz = centre(len(st) - 1)
+    tip_c = _section_wire(cx, cy, cz, last["chord"], last["thick"], last["twist"])
+    cap = occ.addPlaneSurface([occ.addCurveLoop([tip_c[1]])])
+    base = [d for d in loft if d[0] == 2] + [(2, cap)]
     occ.synchronize()
 
+    n = int(blade.get("count", 3))
+    az = blade.get("azimuth_deg", 0.0)
     blades = []
-
-    # Create and position the blade copies.
-    for k in range(blade_count):
-
+    for k in range(n):
         if k == 0:
-
-            current_surfaces = base_surfaces
-
+            dts = base
         else:
-
-            current_surfaces = occ.copy(
-                base_surfaces
-            )
-
-        angle = math.radians(
-            azimuth + 360.0 * k / blade_count
-        )
-
-        occ.rotate(
-            current_surfaces,
-            hx, hy, hz,
-            0, 1, 0,
-            angle
-        )
-
-        blades.append([
-            tag
-            for dim, tag in current_surfaces
-            if dim == 2
-        ])
-
+            dts = occ.copy(base)
+        occ.rotate(dts, hx, hy, hz, 0, 1, 0, math.radians(az + 360.0 * k / n))
+        blades.append([t for _, t in dts])
     occ.synchronize()
-
     return blades

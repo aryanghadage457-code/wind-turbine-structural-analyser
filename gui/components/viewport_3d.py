@@ -31,6 +31,14 @@ COMPONENT_COLORS = {
 BACKGROUND = "#171614"
 
 
+def _format_thickness(values):
+    if not values:
+        return "Not available"
+    if len(values) == 1:
+        return f"{values[0]:.3f} m"
+    return f"{min(values):.3f} - {max(values):.3f} m"
+
+
 class JobWatcher(QObject):
     """Starts the geometry process and relays its messages as Qt signals."""
 
@@ -66,7 +74,7 @@ class JobWatcher(QObject):
                 except queue_mod.Empty:
                     if proc.is_alive():
                         continue
-                    try:                       # process ended, drain once
+                    try:
                         kind, data = q.get(timeout=0.5)
                     except queue_mod.Empty:
                         self.failed.emit(
@@ -97,6 +105,8 @@ class TurbineViewport(QWidget):
 
     status_message = Signal(str)
     component_selected = Signal(str)
+    geometry_ready = Signal(dict)       # {component_name: [(label, value), ...]}
+    build_finished = Signal(bool)       # True on success, False on failure
 
     def __init__(self, project_data=None, parent=None):
         super().__init__(parent)
@@ -107,6 +117,7 @@ class TurbineViewport(QWidget):
         self.component_meshes = {}
         self.geometry_loaded = False
         self.loading = False
+        self.last_details = None
         self._thread = None
         self._worker = None
 
@@ -145,6 +156,7 @@ class TurbineViewport(QWidget):
                 f"Could not prepare the turbine parameters.\n\n{exc}"
             )
             self.status_message.emit(f"Parameter problem: {exc}")
+            self.build_finished.emit(False)
             return
 
         self.loading = True
@@ -241,6 +253,26 @@ class TurbineViewport(QWidget):
                 f"Surface cells: {payload['total_cells']:,} | "
                 f"Time: {payload['generation_time']:.1f} s."
             )
+
+            # ---- build Details-panel rows from the real geometry ----
+            details = {}
+            for component in payload["components"]:
+                cells = payload["component_cell_counts"].get(component, 0)
+                surfaces = payload["component_surface_counts"].get(component, 0)
+                thick = _format_thickness(
+                    payload["component_thickness"].get(component, [])
+                )
+                details[component] = [
+                    ("Component", component),
+                    ("Surfaces", str(surfaces)),
+                    ("Wall thickness", thick),
+                    ("Mesh elements", f"{cells:,}"),
+                    ("Status", "Geometry generated"),
+                ]
+            self.last_details = details
+            self.geometry_ready.emit(details)
+            self.build_finished.emit(True)
+
         except Exception:
             self._on_geometry_failed(traceback.format_exc())
 
@@ -256,6 +288,7 @@ class TurbineViewport(QWidget):
         self.status_message.emit(f"Geometry generation failed: {short}")
         print("\n--- Geometry generation traceback ---\n")
         print(error_text)
+        self.build_finished.emit(False)
 
     @Slot()
     def _on_thread_finished(self):
@@ -276,7 +309,8 @@ class TurbineViewport(QWidget):
         if selected:
             self.component_selected.emit(selected)
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        """Stop the background process. Call this before discarding the viewport."""
         if self._worker is not None:
             self._worker.cancel()
         if self._thread is not None and self._thread.isRunning():
@@ -285,4 +319,7 @@ class TurbineViewport(QWidget):
         if self.plotter is not None:
             self.plotter.close()
             self.plotter = None
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)

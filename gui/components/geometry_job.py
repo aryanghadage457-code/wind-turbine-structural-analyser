@@ -31,7 +31,7 @@ def run_job(config, queue):
         gmsh.option.setNumber("General.Terminal", 0)
 
         queue.put(("progress", "Building turbine surfaces..."))
-        groups, _thickness = build_default(config)
+        groups, thickness = build_default(config)
         queue.put(("progress", f"Geometry built in {time.time() - t0:.1f} s. Meshing..."))
 
         # Member 1's tested settings (about 3 s for the default turbine)
@@ -51,11 +51,18 @@ def run_job(config, queue):
         lookup = np.full(int(node_tags.max()) + 1, -1, dtype=np.int64)
         lookup[node_tags] = np.arange(len(node_tags))
 
+        comp_map = _component_map(groups)
         components, total_cells = {}, 0
-        for component, names in _component_map(groups).items():
-            chunks = []
+        cell_counts, surface_counts, thickness_by_component = {}, {}, {}
+
+        for component, names in comp_map.items():
+            chunks, cell_count, surface_count, thick_values = [], 0, 0, []
             for name in names:
-                for tag in groups.get(name, []):
+                tags = groups.get(name, [])
+                surface_count += len(tags)
+                if name in thickness:
+                    thick_values.append(thickness[name])
+                for tag in tags:
                     types, _, conn = gmsh.model.mesh.getElements(2, int(tag))
                     for etype, c in zip(types, conn):
                         n = gmsh.model.mesh.getElementProperties(int(etype))[3]
@@ -64,18 +71,25 @@ def run_job(config, queue):
                         idx = lookup[np.asarray(c, dtype=np.int64)].reshape(-1, n)
                         counts = np.full((len(idx), 1), n, dtype=np.int64)
                         chunks.append(np.hstack([counts, idx]).ravel())
-                        total_cells += len(idx)
+                        cell_count += len(idx)
             if chunks:
                 components[component] = np.concatenate(chunks)
+            total_cells += cell_count
+            cell_counts[component] = cell_count
+            surface_counts[component] = surface_count
+            thickness_by_component[component] = thick_values
 
         if not components:
             raise RuntimeError("No displayable surface elements were found.")
 
         queue.put(("done", {
             "points": points,
-            "components": components,      # {name: flat PyVista faces array}
+            "components": components,          # {name: flat PyVista faces array}
             "total_cells": total_cells,
             "generation_time": time.time() - t0,
+            "component_cell_counts": cell_counts,
+            "component_surface_counts": surface_counts,
+            "component_thickness": thickness_by_component,
         }))
     except Exception:
         queue.put(("error", traceback.format_exc()))

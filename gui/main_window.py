@@ -8,14 +8,17 @@
     └─────────┴──────────────────────┴─────────┘
     status bar
 
-Same constructor as before: MainWindow(project_data).
-`close_requested` is emitted by File > Close Project. When this window is
-embedded in the single-window shell, main.py connects it to go back to the
-Start page; while it is a stand-alone window it simply closes.
+MainWindow(project_data, viewport=None)
+    If `viewport` is given, it must be a TurbineViewport already created for
+    this project (possibly already loaded). This window reuses it rather
+    than building the geometry a second time.
+`close_requested` is emitted by File > Close Project.
+`project_action` is emitted for File > New / Open; the caller handles it.
 """
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
 
+from gui.components.viewport_3d import TurbineViewport
 from gui.workspace.bottom_dock import BottomDock
 from gui.workspace.details_panel import DetailsPanel
 from gui.workspace.graphics_view import GraphicsView
@@ -29,7 +32,7 @@ class MainWindow(QMainWindow):
     close_requested = Signal()
     project_action = Signal(str)   # project.new / project.open
 
-    def __init__(self, project_data=None, parent=None):
+    def __init__(self, project_data=None, parent=None, viewport=None):
         super().__init__(parent)
 
         self.project_data = project_data or {}
@@ -50,16 +53,20 @@ class MainWindow(QMainWindow):
         self.details = DetailsPanel()
         self.status = StatusBar()
 
+        built_elsewhere = viewport is not None
+        self.viewport = viewport if built_elsewhere else TurbineViewport(self.project_data)
+        self.graphics.set_viewport(self.viewport)
+
         # ---------- layout ----------
         centre = QSplitter(Qt.Vertical)
         centre.addWidget(self.graphics)
         centre.addWidget(self.dock)
-        centre.setStretchFactor(0, 4)
+        centre.setStretchFactor(0, 5)
         centre.setStretchFactor(1, 1)
         centre.setCollapsible(0, False)
         centre.setCollapsible(1, False)
-        self.dock.setMinimumHeight(150)
-        self.graphics.setMinimumHeight(260)
+        self.dock.setMinimumHeight(100)
+        self.graphics.setMinimumHeight(300)
         self._centre_split = centre
 
         main = QSplitter(Qt.Horizontal)
@@ -70,8 +77,8 @@ class MainWindow(QMainWindow):
         main.setStretchFactor(1, 1)
         main.setStretchFactor(2, 0)
         main.setChildrenCollapsible(False)
-        self.outline.setMinimumWidth(230)
-        self.details.setMinimumWidth(300)
+        self.outline.setMinimumWidth(200)
+        self.details.setMinimumWidth(260)
         self._main_split = main
         self._sized = False
 
@@ -91,8 +98,21 @@ class MainWindow(QMainWindow):
         self.ribbon.close_project_requested.connect(self._on_close_project)
         self.graphics.view_requested.connect(self._on_view_requested)
 
+        # geometry <-> rest of the workspace
+        self.viewport.status_message.connect(self.dock.add_message)
+        self.viewport.component_selected.connect(self._on_viewport_selected)
+        self.viewport.geometry_ready.connect(self._on_geometry_ready)
+
         self.outline.tree.select(self.project_name)
         self.dock.add_message(f"Opened project '{self.project_name}'.")
+
+        if built_elsewhere:
+            # Geometry was already generated before this window existed.
+            if self.viewport.last_details:
+                self._on_geometry_ready(self.viewport.last_details)
+        else:
+            # Stand-alone use (e.g. running this file directly): build now.
+            QTimer.singleShot(150, self.viewport.ensure_geometry_loaded)
 
     # ------------------------------------------------------------------
     def showEvent(self, event):
@@ -103,17 +123,29 @@ class MainWindow(QMainWindow):
 
     def _apply_sizes(self):
         total_w = max(self._main_split.width(), 1000)
-        self._main_split.setSizes([260, total_w - 260 - 320, 320])
+        self._main_split.setSizes([210, total_w - 210 - 270, 270])
         total_h = max(self._centre_split.height(), 600)
-        self._centre_split.setSizes([total_h - 210, 210])
+        self._centre_split.setSizes([total_h - 110, 110])
 
     def _on_outline_selected(self, name, kind):
         if kind == "component":
             self.graphics.set_caption(name)
             self.status.set_status(f"Selected {name}")
+            self.viewport.select_component(name)
         else:
             self.graphics.set_caption("Graphics")
             self.status.set_status("Ready")
+            self.viewport.select_component(None)
+
+    def _on_viewport_selected(self, name):
+        """A part was clicked directly in the 3D view: sync the tree."""
+        self.outline.tree.select(name)
+
+    def _on_geometry_ready(self, details_by_component):
+        for name, rows in details_by_component.items():
+            self.details.update_component(name, rows)
+        self.outline.tree.set_status("Geometry", "done")
+        self.dock.add_message("Geometry details updated from the generated model.")
 
     def _on_view_requested(self, key):
         self.dock.log(f"View: {key}")
@@ -128,13 +160,17 @@ class MainWindow(QMainWindow):
                 "the project is created."
             )
             return
-        # Placeholder: real handlers are connected during integration.
+        if action_id in ("geometry.generate", "geometry.reload"):
+            self.viewport.reload()
+            return
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
 
     def _on_close_project(self):
         self.close_requested.emit()
-        if self.isWindow():
-            self.close()
+
+    def shutdown(self):
+        """Called by the owner before this window is discarded."""
+        self.viewport.shutdown()
 
 
 if __name__ == "__main__":

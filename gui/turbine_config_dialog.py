@@ -44,7 +44,7 @@ class TurbineConfigDialog(QDialog):
         self._inputs = {}
 
         self._build()
-        self._revalidate()
+        self._reset()
 
     # ------------------------------------------------------------------
     def _build(self):

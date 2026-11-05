@@ -2,6 +2,7 @@
 
     panel.show_for("Tower", "component")
     panel.set_rows([("Name", "Value"), ...])
+    panel.update_component("Tower", rows)   # called once real geometry loads
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -22,6 +23,9 @@ class DetailsPanel(Panel):
 
     def __init__(self, parent=None):
         super().__init__("Details", parent=parent)
+
+        self._live = {}          # {component_name: rows}  real geometry data
+        self._current = ("", "")
 
         self.table = QTableWidget(0, 2)
         self.table.setObjectName("DetailsTable")
@@ -47,8 +51,17 @@ class DetailsPanel(Panel):
             self.table.setItem(r, 1, QTableWidgetItem(str(value)))
         self.table.resizeRowsToContents()
 
+    def update_component(self, name, rows):
+        """Store real geometry rows for a component and refresh if shown."""
+        self._live[name] = rows
+        if self._current == (name, "component"):
+            self.set_rows(rows)
+
     def show_for(self, name, kind=""):
-        if kind == "component" and name in DETAILS:
+        self._current = (name, kind)
+        if kind == "component" and name in self._live:
+            rows = self._live[name]
+        elif kind == "component" and name in DETAILS:
             rows = DETAILS[name]
         elif kind == "section":
             status = next((s for label, s, _ in OUTLINE if label == name), "pending")

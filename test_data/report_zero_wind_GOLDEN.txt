@@ -1,0 +1,30 @@
+==============================================================================
+STRESS & STRAIN  (sigma = sigma_G + (v/v_ref)^2 sigma_W, tension positive)
+==============================================================================
+elements            : 13742
+wind speed v        : 0 m/s    v_ref: n/a (zero placeholder, value irrelevant)    (v/v_ref)^2 = 0
+wind dataset        : ZERO-WIND PLACEHOLDER (no wind solve available yet)
+strain model        : plane_stress
+material source     : CalculiX input file G.inp
+stress axes         : element-local shell axes (axis 3 = normal)
+
+quantity                       value  units   elem idx  ccx id  surface group
+von_mises                    1884.33  MPa         6194    6195  outer   Nacelle
+sigma1_max (tension)         2521.22  MPa         6194    6195  inner   Nacelle
+sigma3_min (compression)      -2699.95  MPa         6194    6195  outer   Nacelle
+max_shear                    1000.31  MPa         6194    6195  outer   Nacelle
+equivalent_strain           0.011322  -           6194    6195  outer   Nacelle
+max_shear_strain           0.0167555  -           6194    6195  outer   Nacelle
+eps1_max (tension)         0.0103038  -           6194    6195  inner   Nacelle
+eps3_min (compression)    -0.0115087  -           6194    6195  outer   Nacelle
+
+CRITICAL (max von Mises): element index 6194 (CalculiX id 6195), outer surface, group Nacelle, 1884.33 MPa
+
+Notes:
+  - WIND DATA: ZERO-WIND PLACEHOLDER (no wind solve available yet)
+  - Stress components are in element-local shell axes; G and W are added component-wise, which is valid because both come from the same mesh/node order (same local axes). SolveResult carries no frame flag, so this is an assumption, not a verified property of the wind result.
+  - 'outer' = +normal side of the element (outward on every group of the current mesh); 'inner' = the other side.
+  - Surface stresses are extrapolated values (ccx_reader.surface_stresses), not raw integration-point values.
+  - Strain model 'plane_stress': sigma_zz is excluded from Hooke's law (shell plane-stress); eps_zz = -nu/E (sxx+syy).
+  - Young's modulus varies per element (3.56e+09 .. 2.1e+11 Pa): strains follow the model's equivalent-stiffness material (e.g. blades), not a real laminate.
+  - 6347 element(s) have |sigma_zz| > 5% of von Mises on at least one surface (plane-stress assumption questionable there); compare strain_model='full_3d'.

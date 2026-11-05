@@ -1,0 +1,23 @@
+=== MESH COMPARISON ===
+Gravity nodes: (34797, 3)
+Wind nodes: (34797, 3)
+Gravity elements: (17378, 6)
+Wind elements: (17378, 6)
+Node coordinates identical: True
+Element connectivity identical: True
+Element groups identical: True
+Group names identical: True
+
+=== RESULT SHAPES ===
+Gravity
+Outer stress: (17378, 6)
+Inner stress: (17378, 6)
+Displacements: (34797, 3)
+Case: G
+Reference wind speed: None
+Wind
+Outer stress: (17378, 6)
+Inner stress: (17378, 6)
+Displacements: (34797, 3)
+Case: W
+Reference wind speed: 50.0

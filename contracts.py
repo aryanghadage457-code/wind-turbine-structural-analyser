@@ -133,6 +133,12 @@ class Settings:
             raise ValueError(f"nu must be between 0 and 0.5, got {self.nu}")
         if self.extra_mass_kg < 0:
             raise ValueError("extra_mass_kg cannot be negative")
+        if not np.isfinite(self.wind_bearing_deg):
+            raise ValueError("wind_bearing_deg must be finite")
+        if not np.isfinite(self.shear_alpha) or self.shear_alpha < 0:
+            raise ValueError("shear_alpha must be finite and non-negative")
+        if not np.isfinite(self.Cd_tower) or self.Cd_tower < 0 or not np.isfinite(self.Cd_blade) or self.Cd_blade < 0:
+            raise ValueError("drag coefficients must be finite and non-negative")
         if self.safety_factor < 1.0:
             raise ValueError("safety_factor must be at least 1")
         if self.load_case != "parked":
@@ -177,6 +183,7 @@ class SolveResult:
     base_reaction_moment: np.ndarray  # (3,) N*m about the base centre
     applied_force: np.ndarray         # (3,) N, total applied force (copied from LoadSet)
     v_ref: Optional[float] = None     # m/s, for case W only
+    metadata: dict = field(default_factory=dict)  # provenance; kept separate from engineering fields
 
     def __post_init__(self):
         self.stress_outer = np.asarray(self.stress_outer, dtype=float)
@@ -194,6 +201,10 @@ class SolveResult:
             setattr(self, name, arr)
         if self.case not in ("G", "W"):
             raise ValueError("SolveResult.case must be 'G' or 'W'")
+        if not isinstance(self.metadata, dict):
+            raise ValueError("SolveResult.metadata must be a dictionary")
+        if self.v_ref is not None and (not np.isfinite(self.v_ref) or self.v_ref <= 0):
+            raise ValueError("SolveResult.v_ref must be finite and positive when provided")
 
 
 # ----------------------------------------------------------------------------

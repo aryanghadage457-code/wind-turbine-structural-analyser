@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+runs/
+# CalculiX temporary output files
+*.12d
+*.cvg
+*.sta
+spooles.out

@@ -1,0 +1,108 @@
+"""ccx_reader.py - read CalculiX .dat results into the contracts (Member 2).
+ 
+CalculiX shell (S6) elements are expanded internally and print 9 stress points per element:
+    ip - 1 = 3 * layer + p       layer 0..2 through the thickness, p 0..2 in the plane
+Stress components are in the ELEMENT'S LOCAL shell axes (not global), order (xx, yy, zz, xy, xz, yz).
+Use only invariants (von Mises, principal stresses) from them. Adding case G and case W per element
+is fine because both runs use the same mesh and node order.
+"""
+import numpy as np
+ 
+from contracts import Mesh, SolveResult
+ 
+GAUSS = 0.7745966692414834          # through-thickness Gauss point position / half thickness
+# Which end of the layer axis lies on the +normal side of the element (normal from node order,
+# right-hand rule). Set from the flat-plate bending test (tests/plate_calibration.py).
+PLUS_NORMAL_LAYER = 2
+ 
+ 
+def read_dat(dat_path, n_nodes, n_elems):
+    """Parse the .dat file. Returns dict(U (N,3), rf_nodes (n,), rf (n,3), S (E,9,6))."""
+    U = np.full((n_nodes, 3), np.nan)
+    S = np.full((n_elems, 9, 6), np.nan)
+    rf_n, rf_v = [], []
+    mode = None
+    with open(dat_path) as fh:
+        for line in fh:
+            s = line.strip()
+            if not s:
+                continue
+            low = s.lower()
+            if low.startswith("displacements"):
+                mode = "U"; continue
+            if low.startswith("forces"):
+                mode = "RF"; continue
+            if low.startswith("stresses"):
+                mode = "S"; continue
+            if low.startswith("total force") or low.startswith("total"):
+                mode = None; continue
+            p = s.split()
+            try:
+                if mode == "U" and len(p) >= 4:
+                    U[int(p[0]) - 1] = (float(p[1]), float(p[2]), float(p[3]))
+                elif mode == "RF" and len(p) >= 4:
+                    rf_n.append(int(p[0]) - 1); rf_v.append((float(p[1]), float(p[2]), float(p[3])))
+                elif mode == "S" and len(p) >= 8:
+                    S[int(p[0]) - 1, int(p[1]) - 1] = [float(v) for v in p[2:8]]
+            except ValueError:
+                mode = None
+    if np.isnan(U).any():
+        raise ValueError("Displacements missing for some nodes in the .dat file")
+    if np.isnan(S).any():
+        raise ValueError("Stresses missing for some elements/integration points in the .dat file")
+    return dict(U=U, rf_nodes=np.array(rf_n, dtype=int), rf=np.array(rf_v), S=S)
+ 
+ 
+def surface_stresses(S, plus_layer=PLUS_NORMAL_LAYER):
+    """Reduce (E,9,6) to surface stresses by linear extrapolation through the thickness.
+ 
+    Returns (plus_face, minus_face, middle), each (E,6): the faces on the +normal / -normal side
+    of the element and the mid-surface (membrane) stress. Uses the mean of the 3 in-plane points.
+    """
+    L = S.reshape(len(S), 3, 3, 6).mean(axis=2)             # (E, layer, 6)
+    mid = L[:, 1]
+    lo = mid + (L[:, 0] - mid) / GAUSS                       # surface at layer-0 side
+    hi = mid + (L[:, 2] - mid) / GAUSS                       # surface at layer-2 side
+    return (hi, lo, mid) if plus_layer == 2 else (lo, hi, mid)
+ 
+ 
+def element_normals(mesh: Mesh):
+    """Unit normal of each element from its corner node order (right-hand rule)."""
+    p = mesh.nodes[mesh.elems[:, :3]]
+    n = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+    return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+ 
+ 
+def von_mises(sig):
+    """Von Mises from 6 components (any consistent axes). sig (...,6): xx yy zz xy xz yz."""
+    xx, yy, zz, xy, xz, yz = [sig[..., i] for i in range(6)]
+    return np.sqrt(0.5 * ((xx - yy) ** 2 + (yy - zz) ** 2 + (zz - xx) ** 2) + 3 * (xy ** 2 + xz ** 2 + yz ** 2))
+ 
+ 
+def read_result(dat_path, mesh: Mesh, case, applied_force=(0, 0, 0), v_ref=None, outer_is_plus_normal=True):
+    """Build a contracts.SolveResult from a CalculiX run.
+ 
+    outer_is_plus_normal=True assumes element normals point OUTWARD (check with check_outward()).
+    Base reaction force = sum of nodal reactions on the base set. Moment about the origin is
+    sum(r x RF); it does not include the small wall-bending reaction moments at the clamped nodes.
+    """
+    d = read_dat(dat_path, mesh.n_nodes, mesh.n_elems)
+    plus, minus, _ = surface_stresses(d["S"])
+    outer, inner = (plus, minus) if outer_is_plus_normal else (minus, plus)
+    rf, rn = d["rf"], d["rf_nodes"]
+    force = rf.sum(axis=0)
+    moment = np.cross(mesh.nodes[rn], rf).sum(axis=0)
+    return SolveResult(case=case, stress_outer=outer, stress_inner=inner, displacements=d["U"],
+                       base_reaction_force=force, base_reaction_moment=moment,
+                       applied_force=np.asarray(applied_force, dtype=float), v_ref=v_ref)
+ 
+ 
+def check_outward(mesh: Mesh, group_prefix="Tower_"):
+    """For the tower the outward direction is radial. Returns (n_outward, n_inward) element counts."""
+    ids = [i for i, n in enumerate(mesh.group_names) if n.startswith(group_prefix)]
+    m = np.isin(mesh.elem_group, ids)
+    p = mesh.nodes[mesh.elems[m][:, :3]].mean(axis=1)
+    radial = np.c_[p[:, 0], p[:, 1], np.zeros(len(p))]
+    dot = (element_normals(mesh)[m] * radial).sum(axis=1)
+    return int((dot > 0).sum()), int((dot < 0).sum())
+ 

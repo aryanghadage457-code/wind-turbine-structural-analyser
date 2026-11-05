@@ -30,7 +30,7 @@ from analysis_metadata import geometry_fingerprint, mesh_fingerprint, file_finge
 # -------------------------------------------------
 
 # Replace with the actual path to your CalculiX executable.
-CCX_EXE = os.environ.get("CCX_PATH") or None
+CCX_EXE = r"C:\Users\banda\Downloads\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
 OUT_DIR = Path(os.environ.get("TURBINE_OUT", "out")).resolve()
 CONFIG_PATH = Path(os.environ.get("TURBINE_CONFIG", "data/default_turbine.json")).resolve()
 

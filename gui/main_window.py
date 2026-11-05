@@ -96,7 +96,6 @@ class MainWindow(QMainWindow):
         self.outline.tree.item_selected.connect(self._on_outline_selected)
         self.ribbon.action_triggered.connect(self._on_action)
         self.ribbon.close_project_requested.connect(self._on_close_project)
-        self.graphics.view_requested.connect(self._on_view_requested)
 
         # geometry <-> rest of the workspace
         self.viewport.status_message.connect(self.dock.add_message)
@@ -147,23 +146,64 @@ class MainWindow(QMainWindow):
         self.outline.tree.set_status("Geometry", "done")
         self.dock.add_message("Geometry details updated from the generated model.")
 
-    def _on_view_requested(self, key):
-        self.dock.log(f"View: {key}")
+    def _apply_view(self, key):
+        result = self.viewport.set_view(key)
+        if key == "wireframe":
+            self.dock.log(f"Wireframe {'on' if result else 'off'}")
+        else:
+            self.dock.log(f"View: {key}")   
 
     def _on_action(self, action_id):
         if action_id in ("project.new", "project.open"):
             self.project_action.emit(action_id)
             return
         if action_id == "project.save":
-            self.dock.add_message(
-                "Nothing to save yet: project data is written when "
-                "the project is created."
-            )
+            self._save_progress()
             return
         if action_id in ("geometry.generate", "geometry.reload"):
             self.viewport.reload()
             return
+        if action_id.startswith("view."):
+            key = action_id.split(".", 1)[1]
+            if key == "axes":
+                visible = self.viewport.toggle_axes()
+                self.dock.log(f"Axes {'shown' if visible else 'hidden'}")
+            else:
+                self._apply_view(key)
+            return
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
+
+    def _save_progress(self):
+        from datetime import datetime
+        import json
+        from pathlib import Path
+
+        project_path = self.project_data.get("project_path")
+        if not project_path:
+            self.dock.add_message(
+                "Cannot save: this project has no folder on disk.", "warning"
+            )
+            return
+
+        metadata_file = Path(project_path) / "project.json"
+        try:
+            data = {}
+            if metadata_file.exists():
+                data = json.loads(metadata_file.read_text(encoding="utf-8"))
+            data.update(self.project_data)
+            data["last_saved"] = datetime.now().isoformat(timespec="seconds")
+            metadata_file.write_text(
+                json.dumps(data, indent=4), encoding="utf-8"
+            )
+            self.project_data = data
+            self.status.set_status("Saved")
+            self.dock.add_message(
+                f"Project saved at {datetime.now().strftime('%H:%M:%S')}."
+            )
+        except OSError as exc:
+            self.dock.add_message(f"Save failed: {exc}", "error")
+
+
 
     def _on_close_project(self):
         self.close_requested.emit()

@@ -120,6 +120,7 @@ class TurbineViewport(QWidget):
         self.last_details = None
         self._thread = None
         self._worker = None
+        self._axes_visible = True
 
         self.setMinimumSize(400, 350)
         self.setStyleSheet(f"background-color: {BACKGROUND};")
@@ -237,10 +238,11 @@ class TurbineViewport(QWidget):
                     name=component,
                 )
 
-            self.plotter.add_axes(line_width=2)
+            self.plotter.show_axes()
             self.plotter.show_grid(
                 color="#59616B", xlabel="X (m)", ylabel="Y (m)", zlabel="Z (m)"
             )
+
             self.plotter.view_isometric()
             self.plotter.reset_camera()
             self.plotter.render()
@@ -308,6 +310,62 @@ class TurbineViewport(QWidget):
         self.plotter.render()
         if selected:
             self.component_selected.emit(selected)
+
+        # ------------------------------------------------------------------
+    def set_view(self, key):
+        """Handle the Fit / Isometric / Front / Top / Wireframe toolbar."""
+        if self.plotter is None:
+            return
+
+        if key == "fit":
+            self.plotter.reset_camera()
+        elif key == "iso":
+            self.plotter.view_isometric()
+            self.plotter.reset_camera()
+        elif key == "front":
+            self.plotter.view_xz()
+            self.plotter.reset_camera()
+        elif key == "top":
+            self.plotter.view_xy()
+            self.plotter.reset_camera()
+        elif key == "bottom":
+            self.plotter.view_xy(negative=True)
+            self.plotter.reset_camera()
+        elif key == "left":
+            self.plotter.view_yz(negative=True)
+            self.plotter.reset_camera()
+        elif key == "right":
+            self.plotter.view_yz()
+            self.plotter.reset_camera()
+        elif key == "wireframe":
+            self._wireframe = not getattr(self, "_wireframe", False)
+            for actor in self.actors.values():
+                prop = actor.GetProperty()
+                if self._wireframe:
+                    prop.SetRepresentationToWireframe()
+                else:
+                    prop.SetRepresentationToSurface()
+
+        self.plotter.render()
+        return getattr(self, "_wireframe", False) if key == "wireframe" else None
+
+
+    def toggle_axes(self):
+        """Show/hide both the corner orientation triad and the bounding grid."""
+        if self.plotter is None:
+            return self._axes_visible
+
+        self._axes_visible = not self._axes_visible
+        if self._axes_visible:
+            self.plotter.show_axes()
+            self.plotter.show_grid(
+                color="#59616B", xlabel="X (m)", ylabel="Y (m)", zlabel="Z (m)"
+            )
+        else:
+            self.plotter.hide_axes()
+            self.plotter.remove_bounds_axes()
+        self.plotter.render()
+        return self._axes_visible
 
     def shutdown(self):
         """Stop the background process. Call this before discarding the viewport."""

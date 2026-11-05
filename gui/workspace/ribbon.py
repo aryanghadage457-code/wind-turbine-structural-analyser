@@ -29,7 +29,14 @@ TABS = {
         ("Project", [("project.save", "Save", "save", True),
                      ("project.close", "Close\nProject", "close_project", True)]),
         ("View", [("view.fit", "Fit", "fit", True),
-                  ("view.iso", "Isometric", "cube", True)]),
+                  ("view.iso", "Isometric", "cube", True),
+                  ("view.front", "Front", "cube", True),
+                  ("view.top", "Top", "mesh", True),
+                  ("view.bottom", "Bottom", "mesh", True),
+                  ("view.left", "Left", "cube", True),
+                  ("view.right", "Right", "cube", True),
+                  ("view.wireframe", "Wireframe", "mesh", True, True, False)]),
+        ("Display", [("view.axes", "Axes", "mesh", True, True, True)]),
     ],
     "Geometry": [
         ("Model", [("geometry.builtin", "Built-in\nModel", "turbine", True),
@@ -147,7 +154,10 @@ class Ribbon(QWidget):
             buttons_row = QHBoxLayout()
             buttons_row.setSpacing(2)
 
-            for action_id, label, icon_name, enabled in items:
+            for item in items:
+                action_id, label, icon_name, enabled = item[:4]
+                checkable, checked = (item[4], item[5]) if len(item) == 6 else (False, False)
+
                 btn = QToolButton()
                 btn.setObjectName("RibbonButton")
                 btn.setText(label)
@@ -156,12 +166,15 @@ class Ribbon(QWidget):
                 btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.setEnabled(enabled)
+                btn.setCheckable(checkable)
+                if checkable:
+                    btn.setChecked(checked)
                 btn.clicked.connect(
                     lambda _=False, a=action_id: self._on_click(a)
                 )
                 self.buttons[action_id] = btn
                 buttons_row.addWidget(btn)
-
+                
             caption = QLabel(title)
             caption.setObjectName("RibbonGroupLabel")
             caption.setAlignment(Qt.AlignCenter)

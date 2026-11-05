@@ -1,21 +1,18 @@
-"""Central graphics area: view toolbar + a swappable viewport.
+"""Central graphics area: a thin title header + a swappable viewport.
 
 Until the geometry module is connected a placeholder is shown (isometric
 grid, axes triad). The real PyVista viewport replaces it with:
 
     graphics.set_viewport(real_widget)
 
-Signals
-    view_requested(str)   "fit" | "iso" | "front" | "top" | "wireframe"
+View controls (Fit, Isometric, Wireframe, etc.) now live in the ribbon's
+Home tab, so this widget dedicates almost all of its space to the 3D view.
 """
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from gui.theme.styles import COLORS
-from gui.workspace.ribbon_icons import ribbon_icon
 
 
 class PlaceholderViewport(QWidget):
@@ -46,7 +43,6 @@ class PlaceholderViewport(QWidget):
             p.drawLine(self._iso(i, -n, cx, cy, s), self._iso(i, n, cx, cy, s))
             p.drawLine(self._iso(-n, i, cx, cy, s), self._iso(n, i, cx, cy, s))
 
-        # faint turbine silhouette on the grid
         p.setPen(QPen(QColor(COLORS["accent"]), 1.4))
         base = QPointF(cx, cy)
         hub = QPointF(cx, cy - s * 6.5)
@@ -55,7 +51,6 @@ class PlaceholderViewport(QWidget):
             p.drawLine(hub, QPointF(hub.x() + dx * s, hub.y() + dy * s))
         p.drawEllipse(hub, s * 0.25, s * 0.25)
 
-        # axes triad (bottom-left)
         ox, oy = 46.0, h - 40.0
         p.setFont(QFont("Segoe UI", 8, QFont.Bold))
         for dx, dy, colour, label in (
@@ -67,7 +62,6 @@ class PlaceholderViewport(QWidget):
             p.drawLine(QPointF(ox, oy), QPointF(ox + dx, oy + dy))
             p.drawText(QPointF(ox + dx * 1.2 - 3, oy + dy * 1.2 + 4), label)
 
-        # message
         p.setPen(QColor(COLORS["text3"]))
         p.setFont(QFont("Segoe UI", 10))
         p.drawText(self.rect().adjusted(0, 0, 0, -14),
@@ -77,8 +71,6 @@ class PlaceholderViewport(QWidget):
 
 class GraphicsView(QFrame):
 
-    view_requested = Signal(str)
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SidePanel")
@@ -87,41 +79,22 @@ class GraphicsView(QFrame):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ---- toolbar ----
-        bar = QFrame()
-        bar.setObjectName("GraphicsToolbar")
-        bar.setFixedHeight(40)
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(8, 0, 8, 0)
-        row.setSpacing(4)
+        header = QFrame()
+        header.setObjectName("PanelHeader")
+        header.setFixedHeight(28)
+        row = QHBoxLayout(header)
+        row.setContentsMargins(12, 0, 12, 0)
 
-        self._buttons = {}
-        for key, text, icon_name, checkable in (
-            ("fit", "Fit", "fit", False),
-            ("iso", "Isometric", "cube", False),
-            ("front", "Front", "cube", False),
-            ("top", "Top", "mesh", False),
-            ("wireframe", "Wireframe", "mesh", True),
-        ):
-            btn = QToolButton()
-            btn.setObjectName("ViewButton")
-            btn.setText(text)
-            btn.setIcon(ribbon_icon(icon_name, 18))
-            btn.setIconSize(QSize(18, 18))
-            btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            btn.setCheckable(checkable)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, k=key: self.view_requested.emit(k))
-            self._buttons[key] = btn
-            row.addWidget(btn)
-
-        row.addStretch()
-        self.caption = QLabel("Graphics")
+        title = QLabel("GRAPHICS")
+        title.setObjectName("PanelTitle")
+        self.caption = QLabel("")
         self.caption.setObjectName("PanelSubtitle")
-        row.addWidget(self.caption)
-        root.addWidget(bar)
 
-        # ---- viewport slot ----
+        row.addWidget(title)
+        row.addStretch()
+        row.addWidget(self.caption)
+        root.addWidget(header)
+
         self._slot = QVBoxLayout()
         self._slot.setContentsMargins(0, 0, 0, 0)
         root.addLayout(self._slot, 1)

@@ -96,7 +96,7 @@ class Settings:
 
     # Wind (parked rotor)
     wind_bearing_deg: float = 0.0     # compass bearing wind comes FROM (0 = N, 90 = E)
-    v_ref: float = 50.0               # m/s hub-height wind speed used in the single W solve
+    v_ref: float = 8          # m/s hub-height wind speed used in the single W solve
     shear_alpha: float = 0.14         # power-law exponent   PLACEHOLDER
     z_hub: float = 90.0               # m, reference height   PLACEHOLDER: from default_turbine.json
     air_pressure: float = 101325.0    # Pa

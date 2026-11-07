@@ -10,7 +10,7 @@
   "governing_surface": "outer",
   "status": "WITHIN_ALLOWABLE",
   "metadata": {
-    "analysis_timestamp_utc": "2026-11-07T16:47:25.692832+00:00",
+    "analysis_timestamp_utc": "2026-11-07T17:56:23.667060+00:00",
     "case": "W",
     "geometry_fingerprint": "448ab658c34b7ad3b3fdae7110255923b385bc3912def20a6f620829c553815b",
     "material": {
@@ -35,7 +35,7 @@
       "shear_alpha": 0.14
     },
     "solver": {
-      "executable": "C:\\CalculiX\\CalculiX-2.23.0-win-x64\\CalculiX-2.23.0-win-x64\\bin\\ccx.exe",
+      "executable": "C:\\Users\\banda\\Downloads\\CalculiX-2.23.0-win-x64\\CalculiX-2.23.0-win-x64\\bin\\ccx.exe",
       "input_file_sha256": "d3d202a0c974adb09e7c02b694e6c6168771ba9690984a86fea273c94537b860",
       "solver_version": "see CalculiX .log"
     },

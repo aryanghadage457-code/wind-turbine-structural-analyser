@@ -1,3 +1,4 @@
+
 """ccx_writer.py - write the CalculiX input file for the complete turbine (Member 2).
  
 One file per load case:
@@ -14,6 +15,8 @@ import numpy as np
 from contracts import Mesh, Settings, LoadSet, check_group_props
 from solver import bcs
 from solver import links
+from solver import rigid_head
+
  
 G_ACC = 9.81
 DEFAULT_BLADE_EI_FILE = "data/nrel5mw_blade_ei.csv"   # NREL 5-MW BlFract, FlpStff, EdgStff (N*m^2)
@@ -36,7 +39,9 @@ def write_inp(
     ref_group="Nacelle",
     ref_mode="distribute",
     ref_nodes=None,
-    rigid_links=None
+    rigid_links=None,
+    extra_forces=None,
+    rigid_head_groups=None
 ):
     """Write <path> (a .inp file). Returns the path.
  
@@ -59,6 +64,23 @@ def write_inp(
         raise ValueError("case must be 'G' or 'W'")
     if case == "W" and (loads is None or loads.case != "W"):
         raise ValueError("case 'W' needs a LoadSet with case == 'W'")
+
+    # --- Additional machinery forces
+    extra = None
+    if extra_forces is not None:
+        extra = np.asarray(extra_forces, dtype=float)
+        if extra.shape != (mesh.n_nodes, 3):
+            raise ValueError(
+                f"extra_forces must have shape ({mesh.n_nodes}, 3), "
+                f"but received {extra.shape}"
+            )
+        if not np.all(np.isfinite(extra)):
+            raise ValueError("extra_forces contains NaN or Inf.")
+        if case != "G":
+            raise ValueError(
+                "Additional machinery forces are supported only for case G."
+            )
+
     if "base" not in mesh.node_sets:
         bcs.assign_node_sets(mesh)
  
@@ -151,22 +173,53 @@ def write_inp(
     # --- fixed support: all 6 DOF on the base ring (text comes from bcs.py)
     L += bcs.boundary_lines(mesh, "base")
     # --- rigid links between component patches
-    if rigid_links:
-        first_link_id = mesh.n_nodes + 1
-        L += links.link_lines(
+    if rigid_head_groups:
+        if ref_mode == "coupling":
+            raise ValueError(
+                "Rigid-head node IDs may conflict with reference nodes "
+                "when ref_mode='coupling'. Use ref_mode='distribute'."
+            )
+
+        head_lines, head_info = rigid_head.rigid_head_lines(
             mesh,
-            rigid_links,
-            first_id=first_link_id
+            groups=rigid_head_groups,
+            first_id=mesh.n_nodes + 1,
+            ref_point=ref_point,
         )
+
+        L += head_lines
+
+        print(
+            f"Rigid head created: {head_info['groups']}, "
+            f"{head_info['n_nodes']} nodes, "
+            f"{head_info['n_equations']} equations"
+        )    
  
     # --- load step
     L += ["*STEP", "*STATIC"]
+
     if case == "G":
+        # Gravity acts on every shell element.
         L += ["*DLOAD", f"EALL, GRAV, {G_ACC}, 0., 0., -1."]
-        if ref:
+
+        has_extra = extra is not None and np.any(extra)
+
+        if ref or has_extra:
             L.append("*CLOAD")
-            L += _ref_cload_lines(ref)
+
+            # Existing reference-node loads.
+            if ref:
+                L += _ref_cload_lines(ref)
+
+            # Additional machinery forces, distributed over the selected nodes.
+            if has_extra:
+                for n in np.where(np.abs(extra).sum(axis=1) > 0)[0]:
+                    for d in range(3):
+                        if extra[n, d] != 0.0:
+                            L.append(f"{n + 1}, {d + 1}, {extra[n, d]:.10g}")
+
     else:
+        # Existing wind loading, unchanged.
         L.append("*CLOAD")
         f = loads.nodal_forces
         for n in np.where(np.abs(f).sum(axis=1) > 0)[0]:
@@ -497,4 +550,3 @@ def _ref_cload_lines(refs):
             for n, wi in zip(r["nodes"], w):
                 L += [f"{n + 1}, {d + 1}, {wi * r['force'][d]:.10g}" for d in range(3) if r["force"][d] != 0.0]
     return L
- 

@@ -3,14 +3,14 @@
   "yield_strength_pa": 345000000.0,
   "safety_factor": 1.5,
   "allowable_stress_pa": 230000000.0,
-  "maximum_von_mises_pa": 699339602.0683701,
-  "utilization": 3.0406069655146526,
-  "governing_element_index_0_based": 8071,
-  "governing_calculix_element_id_1_based": 8072,
+  "maximum_von_mises_pa": 190879939.37863976,
+  "utilization": 0.8299127799071294,
+  "governing_element_index_0_based": 8018,
+  "governing_calculix_element_id_1_based": 8019,
   "governing_surface": "outer",
-  "status": "EXCEEDS_ALLOWABLE",
+  "status": "WITHIN_ALLOWABLE",
   "metadata": {
-    "analysis_timestamp_utc": "2026-11-05T12:38:54.064890+00:00",
+    "analysis_timestamp_utc": "2026-11-07T16:47:25.692832+00:00",
     "case": "W",
     "geometry_fingerprint": "448ab658c34b7ad3b3fdae7110255923b385bc3912def20a6f620829c553815b",
     "material": {
@@ -20,7 +20,7 @@
     },
     "material_source": "CalculiX input file G.inp",
     "mesh_fingerprint": "3b9c6517cc0fd4a4d1b2ed35b0b94584c9eafd2650f121ff966c5f49b3caeefd",
-    "operating_wind_speed_m_s": 35.0,
+    "operating_wind_speed_m_s": 8.0,
     "reference_wind_speed_m_s": 50.0,
     "schema_version": 1,
     "settings": {
@@ -35,8 +35,8 @@
       "shear_alpha": 0.14
     },
     "solver": {
-      "executable": "C:\\Users\\banda\\Downloads\\CalculiX-2.23.0-win-x64\\CalculiX-2.23.0-win-x64\\bin\\ccx.exe",
-      "input_file_sha256": "b54f07e7179796bb1df2c3302787aa5000cb246df3d5dbf556b348828b5723bb",
+      "executable": "C:\\CalculiX\\CalculiX-2.23.0-win-x64\\CalculiX-2.23.0-win-x64\\bin\\ccx.exe",
+      "input_file_sha256": "d3d202a0c974adb09e7c02b694e6c6168771ba9690984a86fea273c94537b860",
       "solver_version": "see CalculiX .log"
     },
     "strain_model": "plane_stress",

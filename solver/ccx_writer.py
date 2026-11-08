@@ -41,7 +41,9 @@ def write_inp(
     ref_nodes=None,
     rigid_links=None,
     extra_forces=None,
-    rigid_head_groups=None
+    rigid_head_groups=None,
+    blade_mass_match=False,
+    blade_mass_factor=1.04536
 ):
     """Write <path> (a .inp file). Returns the path.
  
@@ -102,7 +104,8 @@ def write_inp(
     L += ["*NSET, NSET=NALL, GENERATE", f"1, {mesh.n_nodes}"]
  
     # --- spanwise blade stiffness: None -> blades keep the single BLADE_EQ material (old behaviour)
-    blade_plan = _plan_blade_regions(mesh, thickness, settings, blade_ei_file, blade_match, blade_regions)
+    blade_plan = _plan_blade_regions(mesh, thickness, settings, blade_ei_file, blade_match, blade_regions,
+                                     blade_mass_match, blade_mass_factor)
     if blade_plan:
         L += _blade_region_elsets(blade_plan)
         _write_blade_report(path, blade_plan)
@@ -264,10 +267,17 @@ def _id_lines_names(names, per_line=8):
 # shell is more anisotropic (I_max/I_min) than the real blade, so edgewise EI is usually too
 # high. Shear webs, spar caps and laminate stacking are not represented.
 # ============================================================================
-def load_blade_ei(path):
-    """Read the NREL blade EI table -> (blfract, flp, edg), N*m^2.
-    Accepts a 3-column text/CSV file (BlFract, FlpStff, EdgStff) or an ElastoDyn/FAST blade .dat
-    whose table has >= 6 columns (BlFract, pitch axis, twist, mass, FlpStff, EdgStff, ...)."""
+BLADE_RHO = 2050.0     # equivalent blade density (kg/m3), the same value write_inp uses; do not change
+
+
+def load_blade_table(path):
+    """Read the NREL blade table -> dict(x, flp, edg, mass); mass is None if the file has no BMassDen.
+    Row formats (numbers only; text lines are skipped):
+      3 cols  BlFract, FlpStff, EdgStff                         (your CSV)
+      4 cols  BlFract, FlpStff, EdgStff, BMassDen               (CSV with mass)
+      5 cols  BlFract, StrcTwst, BMassDen, FlpStff, EdgStff     (ElastoDyn v1.00 blade file)
+      >=6     BlFract, AeroCent, StrcTwst, BMassDen, FlpStff, EdgStff, ...   (FAST v7)
+    Units: N*m^2 and kg/m. The ElastoDyn file's AdjBlMs factor is NOT read: pass blade_mass_factor."""
     rows = []
     with open(path) as fh:
         for line in fh:
@@ -275,21 +285,37 @@ def load_blade_ei(path):
                 v = [float(t) for t in line.replace(",", " ").split()]
             except ValueError:
                 continue
-            if len(v) == 3:
-                rows.append((v[0], v[1], v[2]))
-            elif len(v) >= 6:
-                rows.append((v[0], v[4], v[5]))
+            n = len(v)
+            if n == 3:
+                rows.append((v[0], v[1], v[2], None))
+            elif n == 4:
+                rows.append((v[0], v[1], v[2], v[3]))
+            elif n == 5:
+                rows.append((v[0], v[3], v[4], v[2]))
+            elif n >= 6:
+                rows.append((v[0], v[4], v[5], v[3]))
     if len(rows) < 3:
         raise ValueError(f"{path}: found fewer than 3 table rows (BlFract, FlpStff, EdgStff)")
-    x, flp, edg = np.array(sorted(rows)).T
+    rows.sort(key=lambda r: r[0])
+    x = np.array([r[0] for r in rows]); flp = np.array([r[1] for r in rows]); edg = np.array([r[2] for r in rows])
+    mass = np.array([r[3] for r in rows]) if all(r[3] is not None for r in rows) else None
     if x[0] < 0 or x[-1] > 1.0001 or np.any(np.diff(x) <= 0):
         raise ValueError(f"{path}: BlFract must increase strictly within 0..1")
     if np.any(flp <= 0) or np.any(edg <= 0) or max(flp.max(), edg.max()) < 1e7:
         raise ValueError(f"{path}: stiffness must be positive and in N*m^2 (root value is of order 1e10)")
-    return x, flp, edg
- 
- 
-def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg):
+    if mass is not None and np.any(mass <= 0):
+        raise ValueError(f"{path}: BMassDen must be positive (kg/m)")
+    return dict(x=x, flp=flp, edg=edg, mass=mass)
+
+
+def load_blade_ei(path):
+    """Read the NREL blade EI table -> (blfract, flp, edg), N*m^2 (kept for older callers)."""
+    t = load_blade_table(path)
+    return t["x"], t["flp"], t["edg"]
+
+
+def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg,
+                        mass_match=False, blade_mass_factor=1.04536, verbose=True):
     """Split every blade into n_reg spanwise regions and find E_eq for each. Returns None if the
     feature is off or cannot run (warning issued); otherwise a dict used by the writers below."""
     if not ei_file:
@@ -306,7 +332,10 @@ def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg):
     if "HUB" not in names:
         warnings.warn("no Hub group: cannot find the blade axis, blades keep uniform stiffness")
         return None
-    xb, flp, edg = load_blade_ei(ei_file)
+    tab = load_blade_table(ei_file)
+    xb, flp, edg, mass = tab["x"], tab["flp"], tab["edg"], tab["mass"]
+    if mass_match and mass is None:
+        raise ValueError(f"{ei_file} has no BMassDen column, so blade_mass_match cannot be used")
     hub_c = mesh.nodes[np.unique(mesh.elems[mesh.elem_group == names.index("HUB")])].mean(axis=0)
     plan = {"groups": set(), "regions": [], "rows": []}
     d_xi = 1.0 / n_reg
@@ -349,8 +378,17 @@ def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg):
             ov = np.clip(np.minimum(e_hi, r_hi) - np.maximum(e_lo, r_lo), 0.0, None) / np.maximum(e_hi - e_lo, 1e-12)
             sel = wall & (ov > 0)
             i_min = i_max = E = np.nan
+            perim = float((area[sel] * ov[sel]).sum() / (d_xi * span)) if sel.any() else np.nan
+            t_r, m_t = t, np.nan
+            if mass_match and sel.sum() >= 6:      # wall thickness that gives NREL's mass per metre
+                m_t = blade_mass_factor * float(np.mean(np.interp(xs, xb, mass)))
+                t_r = m_t / (BLADE_RHO * perim)
+                if not (0.002 <= t_r <= 0.1):
+                    warnings.warn(f"{name}_R{r + 1:02d}: required wall thickness {1000 * t_r:.1f} mm is outside 2..100 mm")
+            elif mass_match:
+                warnings.warn(f"{name}_R{r + 1:02d}: too few elements, uniform thickness kept")
             if sel.sum() >= 6:
-                w = t * area[sel] * ov[sel] / (d_xi * span)
+                w = t_r * area[sel] * ov[sel] / (d_xi * span)
                 du = pu[sel] - np.sum(w * pu[sel]) / w.sum()
                 dv = pv[sel] - np.sum(w * pv[sel]) / w.sum()
                 C = np.array([[np.sum(w * du * du), np.sum(w * du * dv)],
@@ -359,7 +397,7 @@ def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg):
                 E = tf / i_min if match == "flap" else te / i_max
             rows.append(dict(blade=name, region=r + 1, set=f"{name}_R{r + 1:02d}", ids=eidx[m] + 1,
                              xi_lo=r * d_xi, xi_hi=(r + 1) * d_xi, flp_t=tf, edg_t=te,
-                             i_min=i_min, i_max=i_max, E=E))
+                             i_min=i_min, i_max=i_max, E=E, t=t_r, m_t=m_t, perim=perim))
         if sum(len(q["ids"]) for q in rows) != len(eidx):
             raise ValueError(f"{name}: not every blade element was assigned to exactly one region")
         good = [q for q in rows if np.isfinite(q["E"])]
@@ -372,6 +410,8 @@ def _plan_blade_regions(mesh, thickness, settings, ei_file, match, n_reg):
             if not (1e8 < q["E"] < 1e12):
                 warnings.warn(f"{q['set']}: equivalent E = {q['E']:.3g} Pa is outside 1e8..1e12, check the EI table")
             q["flp_m"], q["edg_m"] = q["E"] * q["i_min"], q["E"] * q["i_max"]
+        if mass_match and verbose:
+            _print_blade_mass(name, rows, xb, mass, blade_mass_factor, span)
         plan["groups"].add(name)
         plan["regions"] += rows
     plan["rows"] = plan["regions"]
@@ -398,24 +438,56 @@ def _blade_region_sections(plan, thickness):
     L = []
     for q in plan["regions"]:
         gname = next(g for g in thickness if g.upper() == q["blade"])
-        L += [f"*SHELL SECTION, ELSET={q['set']}, MATERIAL={q['set']}", f"{thickness[gname]:.10g}"]
+        L += [f"*SHELL SECTION, ELSET={q['set']}, MATERIAL={q['set']}", f"{q.get('t', thickness[gname]):.10g}"]
     return L
  
  
+def _print_blade_mass(name, rows, xb, mass, f, span):
+    """One line per blade: model wall mass and centre of mass against the NREL table (x factor)."""
+    if any(not np.isfinite(q["perim"]) for q in rows):
+        return
+    dx = rows[0]["xi_hi"] - rows[0]["xi_lo"]
+    m = np.array([BLADE_RHO * q["t"] * q["perim"] for q in rows]); xm = np.array([(q["xi_lo"] + q["xi_hi"]) / 2 for q in rows])
+    xs = np.linspace(0.0, 1.0, 2001); mt = f * np.interp(xs, xb, mass)
+    trap = getattr(np, "trapezoid", None) or np.trapz          # NumPy 2.x / 1.x
+    print(f"{name}: wall mass {(m * dx * span).sum():.0f} kg (NREL table x {f}: {trap(mt, xs) * span:.0f} kg), "
+          f"centre of mass {(m * xm).sum() / m.sum() * span:.2f} m from the root "
+          f"(NREL {trap(mt * xs, xs) / trap(mt, xs) * span:.2f} m)")
+
+
+def element_thickness(mesh, thickness, settings, **plan_kwargs):
+    """(E,) wall thickness of every element, including the blade-region thicknesses. Use it for the expected
+    weight:  t_el = element_thickness(mesh, thickness, S, blade_ei_file=..., blade_mass_match=True)
+    plan_kwargs: blade_ei_file, blade_match, blade_regions, blade_mass_match, blade_mass_factor."""
+    t_el = np.array([thickness[mesh.group_names[g]] for g in mesh.elem_group], dtype=float)
+    plan = _plan_blade_regions(mesh, thickness, settings,
+                               plan_kwargs.get("blade_ei_file", DEFAULT_BLADE_EI_FILE),
+                               plan_kwargs.get("blade_match", "flap"), plan_kwargs.get("blade_regions", 12),
+                               plan_kwargs.get("blade_mass_match", False),
+                               plan_kwargs.get("blade_mass_factor", 1.04536), verbose=False)
+    if plan:
+        for q in plan["regions"]:
+            t_el[np.asarray(q["ids"]) - 1] = q["t"]
+    return t_el
+
+
 def _write_blade_report(path, plan):
     """<job>_blade_ei.csv: target vs model EI per region, for the validation table."""
     out = os.path.splitext(path)[0] + "_blade_ei.csv"
     with open(out, "w") as fh:
         fh.write("blade,region,xi_lo,xi_hi,n_elems,E_eq_Pa,I_min_m4,I_max_m4,"
-                 "FlpStff_target,FlpStff_model,EdgStff_target,EdgStff_model,flp_ratio,edg_ratio\n")
+                 "FlpStff_target,FlpStff_model,EdgStff_target,EdgStff_model,flp_ratio,edg_ratio,"
+                 "t_wall_m,mass_per_len_target,mass_per_len_model,perimeter_m\n")
         for q in plan["regions"]:
+            t_r = q.get("t", float("nan")); pe = q.get("perim", float("nan"))
             fh.write(f"{q['blade']},{q['region']},{q['xi_lo']:.4f},{q['xi_hi']:.4f},{len(q['ids'])},"
                      f"{q['E']:.6g},{q['i_min']:.6g},{q['i_max']:.6g},{q['flp_t']:.6g},{q['flp_m']:.6g},"
                      f"{q['edg_t']:.6g},{q['edg_m']:.6g},{q['flp_m'] / q['flp_t']:.4f},"
-                     f"{q['edg_m'] / q['edg_t']:.4f}\n")
+                     f"{q['edg_m'] / q['edg_t']:.4f},{t_r:.6g},{q.get('m_t', float('nan')):.6g},"
+                     f"{BLADE_RHO * t_r * pe:.6g},{pe:.6g}\n")
     return out
- 
- 
+
+
 # ============================================================================
 # Reference nodes for the extra (machinery) masses (added; now one node PER COMPONENT)
 #   case G : each node carries F = (0, 0, -mass_kg * g). Shell self-weight stays in the *DLOAD

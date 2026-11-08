@@ -30,11 +30,17 @@ from analysis_metadata import geometry_fingerprint, mesh_fingerprint, file_finge
 # -------------------------------------------------
 
 # Replace with the actual path to your CalculiX executable.
-CCX_EXE = r"C:\Users\banda\Downloads\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
+CCX_EXE = r"C:\CalculiX\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
 OUT_DIR = Path(os.environ.get("TURBINE_OUT", "out")).resolve()
 CONFIG_PATH = Path(os.environ.get("TURBINE_CONFIG", "data/default_turbine.json")).resolve()
 
+BLADE_TABLE = "data/NRELOffshrBsline5MW_Blade.dat"
 
+BLADE_KW = dict(
+    blade_ei_file=BLADE_TABLE,
+    blade_mass_match=True,
+    blade_mass_factor=1.04536
+)
 # -------------------------------------------------
 # BUILD FULL TURBINE MESH
 # -------------------------------------------------
@@ -102,7 +108,7 @@ if __name__ == "__main__":
     S = Settings()
     S.mesh_size = float(os.environ.get("TURBINE_MESH_SIZE", S.mesh_size))
     S.wind_bearing_deg = args.direction
-    S.v_ref = 50.0
+    S.v_ref = 50
     from geometry.default_generator import load_params
     params = load_params(CONFIG_PATH)
     S.z_hub = float(params["tower"]["sections"][-1]["z1"]) + float(params["nacelle"]["height"]) / 2.0
@@ -359,6 +365,7 @@ if __name__ == "__main__":
         case="W",
         loads=wind_loads,
         rigid_head_groups=("Nacelle", "Hub"),
+        **BLADE_KW
     )
 
     # -------------------------------------------------
@@ -391,6 +398,9 @@ if __name__ == "__main__":
                 "input_file_sha256": file_fingerprint(inp), "solver_version": "see CalculiX .log"},
         material={"E_Pa": S.E, "nu": S.nu, "rho_kg_m3": S.rho},
         settings={"mesh_size_m": S.mesh_size,
+                  "blade_mass_match": True,
+                  "blade_mass_factor": 1.04536,
+                  "blade_ei_file": BLADE_TABLE,
                   "mesh_base_size_m": float(os.environ.get("TURBINE_MESH_BASE_SIZE", 0.5)),
                   "mesh_refine_distance_m": float(os.environ.get("TURBINE_MESH_REFINE_DISTANCE", 6.0)),
                   "mesh_order": int(os.environ.get("TURBINE_MESH_ORDER", 2)),

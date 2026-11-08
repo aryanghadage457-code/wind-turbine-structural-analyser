@@ -19,7 +19,11 @@ from pathlib import Path
 from contracts import Settings
 from solver import bcs, links
 from solver.mesh import calculate_s6_areas
-from solver.ccx_writer import write_inp, default_ref_nodes
+from solver.ccx_writer import (
+    write_inp,
+    default_ref_nodes,
+    element_thickness
+)
 from solver.ccx_runner import run_ccx
 from solver import ccx_reader as R
 from analysis_metadata import geometry_fingerprint, mesh_fingerprint, file_fingerprint, make_metadata, atomic_pickle
@@ -31,9 +35,20 @@ from analysis_metadata import geometry_fingerprint, mesh_fingerprint, file_finge
 
 # IMPORTANT:
 # Replace this with the actual path to your CalculiX executable.
-CCX_EXE =r"C:\Users\banda\Downloads\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
+CCX_EXE =r"C:\CalculiX\CalculiX-2.23.0-win-x64\CalculiX-2.23.0-win-x64\bin\ccx.exe"
 OUT_DIR = Path(os.environ.get("TURBINE_OUT", "out")).resolve()
 CONFIG_PATH = Path(os.environ.get("TURBINE_CONFIG", "data/default_turbine.json")).resolve()
+# -------------------------------------------------
+# NREL BLADE MASS + EI MATCHING
+# -------------------------------------------------
+
+BLADE_TABLE = "data/NRELOffshrBsline5MW_Blade.dat"
+
+BLADE_KW = dict(
+    blade_ei_file=BLADE_TABLE,
+    blade_mass_match=True,
+    blade_mass_factor=1.04536
+)
 
 
 # -------------------------------------------------
@@ -310,34 +325,51 @@ if __name__ == "__main__":
 
     W = 0.0
 
+    # Calculate the actual thickness assigned to every element.
+    # Blade elements get their NREL-based regional thickness.
+    # Other components retain their original thickness.
+
+    t_el = element_thickness(
+        mesh,
+        thickness,
+        S,
+        **BLADE_KW
+    )
+
     print(
         "\n--- expected weight "
-        "(S6 area x thickness x rho x g) ---"
+        "(S6 area x element thickness x rho x g) ---"
     )
 
     for gi, name in enumerate(mesh.group_names):
 
-        # Equivalent density for blades;
-        # steel density for other components.
+        mask = mesh.elem_group == gi
+
         rho = (
             2050.0
             if name.startswith("Blade_")
             else S.rho
         )
 
-        w = (
-            area[mesh.elem_group == gi].sum()
-            * thickness[name]
+        w = np.sum(
+            area[mask]
+            * t_el[mask]
             * rho
             * 9.81
         )
 
         W += w
 
-        print(f"{name:12s} {w / 1e3:10.1f} kN")
+        if name.startswith("Blade_"):
+            print(
+                f"{name:12s} {w / 1e3:10.1f} kN "
+                f"(thickness: {t_el[mask].min()*1000:.2f}–"
+                f"{t_el[mask].max()*1000:.2f} mm)"
+            )
+        else:
+            print(f"{name:12s} {w / 1e3:10.1f} kN")
 
     print(f"{'TOTAL':12s} {W / 1e3:10.1f} kN")
-
     # -------------------------------------------------
     # REFERENCE MASS POSITIONS
     # -------------------------------------------------
@@ -366,6 +398,7 @@ if __name__ == "__main__":
         case="G",
         ref_nodes=ref_nodes,
         rigid_head_groups=("Nacelle", "Hub"),
+        **BLADE_KW
     )
 
     # -------------------------------------------------

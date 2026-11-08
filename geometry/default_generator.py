@@ -1,10 +1,16 @@
-"""Default turbine generator (Member 1). Units: metres. Z up, rotor axis +Y.
-Outer SURFACES only (shell model). Wall thickness is a number per tag.
-Tags: Tower_1.. , Nacelle, Hub, Blade_1..3
+
+"""Default turbine generator.
+
+Units: metres.
+Z up, rotor axis +Y.
+Outer surfaces only (shell model).
+Wall thickness is assigned per surface group.
 """
+
 import json
 import math
 import gmsh
+
 from geometry.blade import build_blades
 
 occ = gmsh.model.occ
@@ -16,175 +22,494 @@ def load_params(path="data/default_turbine.json"):
 
 
 def _tower_surfaces(sections):
-    """Lateral cone surface per section (solids and end-disks removed)."""
+    """Create tower lateral surfaces; remove solids and end disks."""
     for s in sections:
         h = s["z1"] - s["z0"]
-        if abs(s["d0"] - s["d1"]) < 1e-9:      # straight cylinder
-            occ.addCylinder(0, 0, s["z0"], 0, 0, h, s["d0"] / 2)
-        else:                                   # tapered cone
-            occ.addCone(0, 0, s["z0"], 0, 0, h, s["d0"] / 2, s["d1"] / 2)
+
+        if abs(s["d0"] - s["d1"]) < 1e-9:
+            occ.addCylinder(
+                0, 0, s["z0"],
+                0, 0, h,
+                s["d0"] / 2
+            )
+        else:
+            occ.addCone(
+                0, 0, s["z0"],
+                0, 0, h,
+                s["d0"] / 2,
+                s["d1"] / 2
+            )
+
     occ.synchronize()
+
     vols = gmsh.model.getEntities(3)
-    keep, disks = set(), []
-    for (_, v) in vols:
-        for (_, s) in gmsh.model.getBoundary([(3, v)], oriented=False):
+    keep = set()
+    disks = []
+
+    for _, v in vols:
+        boundary = gmsh.model.getBoundary(
+            [(3, v)], oriented=False
+        )
+
+        for _, s in boundary:
             if gmsh.model.getType(2, s) in ("Cone", "Cylinder"):
                 keep.add(s)
             else:
                 disks.append((2, s))
+
     occ.remove(vols)
-    occ.remove(disks, recursive=True)
+    if disks:
+        occ.remove(disks, recursive=True)
+
     occ.synchronize()
     return sorted(keep)
 
 
+
 def _nacelle_surfaces(nac, z_top, r_top):
-    """Nacelle faces (volume removed). The floor sits at z_top.
-    Optional "round" in the nacelle block: radius that rounds the 4 edges along the
-    rotor axis, so the cross-section becomes a rounded rectangle. The front and rear
-    faces stay flat, and the tower-top circle must fit on the flat part of the floor."""
-    w, h = nac["width"], nac["height"]
-    y0, y1 = nac["y_rear"], nac["y_front"]
+    """Create nacelle surfaces with four rounded longitudinal edges."""
+
+    w = nac["width"]
+    h = nac["height"]
+    y0 = nac["y_rear"]
+    y1 = nac["y_front"]
     rnd = float(nac.get("round", 0.0))
+
     if rnd > 0:
         if rnd > min(w, h) / 2 - 0.1:
-            raise ValueError("Nacelle rounding is larger than the nacelle can take.")
-        if r_top + rnd + 0.1 > w / 2:
-            raise ValueError("Nacelle rounding too large: the tower top must fit on the "
-                             "flat part of the nacelle floor (reduce 'round' or widen the nacelle).")
-    box = occ.addBox(-w / 2, y0, z_top, w, y1 - y0, h)
+            raise ValueError(
+                "Nacelle rounding is larger than the nacelle can take."
+            )
+
+    box = occ.addBox(
+        -w / 2, y0, z_top,
+        w, y1 - y0, h
+    )
+
     occ.synchronize()
+
     if rnd > 0:
-        faces = gmsh.model.getBoundary([(3, box)], oriented=False)
-        curves = {c for f in faces for (_, c) in gmsh.model.getBoundary([f], oriented=False)}
+        faces = gmsh.model.getBoundary(
+            [(3, box)], oriented=False
+        )
+
+        curves = set()
+
+        for _, face in faces:
+            boundary = gmsh.model.getBoundary(
+                [(2, face)], oriented=False
+            )
+            curves.update(
+                tag for dim, tag in boundary if dim == 1
+            )
+
         edges = []
-        for c in curves:
-            xa, ya, za, xb, yb, zb = gmsh.model.getBoundingBox(1, c)
-            if abs(xb - xa) < 1e-6 and abs(zb - za) < 1e-6:     # edge runs along Y
-                edges.append(c)
+        tol = 1e-4
+        expected_length = y1 - y0
+
+        for c in sorted(curves):
+            xmin, ymin, zmin, xmax, ymax, zmax = (
+                gmsh.model.getBoundingBox(1, c)
+            )
+
+            # Must be a long edge parallel to Y.
+            if (
+                abs((ymax - ymin) - expected_length) < tol
+                and abs(xmax - xmin) < tol
+                and abs(zmax - zmin) < tol
+            ):
+                x_mid = (xmin + xmax) / 2
+                z_mid = (zmin + zmax) / 2
+
+                at_side = (
+                    abs(abs(x_mid) - w / 2) < tol
+                )
+
+                at_top_or_bottom = (
+                    abs(z_mid - z_top) < tol
+                    or abs(z_mid - (z_top + h)) < tol
+                )
+
+                if at_side and at_top_or_bottom:
+                    edges.append(c)
+
+        print("Nacelle longitudinal edges:", len(edges))
+        print("Selected edge tags:", edges)
+
+        if len(edges) != 4:
+            raise RuntimeError(
+                f"Expected 4 Nacelle longitudinal edges, "
+                f"found {len(edges)}"
+            )
+
         occ.fillet([box], edges, [rnd])
         occ.synchronize()
-    vols = [e for e in gmsh.model.getEntities(3)]
-    faces = []
-    for (_, v) in vols:
-        faces += [s for (_, s) in gmsh.model.getBoundary([(3, v)], oriented=False)]
+
+    vols = gmsh.model.getEntities(3)
+    result_faces = []
+
+    for _, v in vols:
+        result_faces.extend(
+            tag for dim, tag in gmsh.model.getBoundary(
+                [(3, v)], oriented=False
+            ) if dim == 2
+        )
+
     occ.remove(vols)
     occ.synchronize()
-    return faces
+
+    return result_faces
+
 
 
 def _hub_surface(hub, nac, z_top):
+    """Create the spherical hub surface."""
     zc = z_top + nac["height"] / 2
-    t = occ.addSphere(0, hub["overhang"], zc, hub["diameter"] / 2)
+
+    tag = occ.addSphere(
+        0,
+        hub["overhang"],
+        zc,
+        hub["diameter"] / 2
+    )
+
     occ.synchronize()
-    vols = [(3, t)]
-    face = [s for (_, s) in gmsh.model.getBoundary(vols, oriented=False)]
-    occ.remove(vols)
+
+    face = [
+        s for _, s in gmsh.model.getBoundary(
+            [(3, tag)], oriented=False
+        )
+    ]
+
+    occ.remove([(3, tag)])
     occ.synchronize()
+
     return face
+
+
+def _tower_top_ring(sections, nac, z_top):
+    """
+    Create an annular shell surface at the tower top.
+
+    The inner radius matches the tower-top radius.
+    The outer radius is configurable in the JSON file.
+    """
+    r_inner = sections[-1]["d1"] / 2
+    r_outer = nac.get("tower_ring_outer_radius", 2.4)
+
+    if r_outer <= r_inner:
+        raise ValueError(
+            "tower_ring_outer_radius must be greater "
+            "than the tower-top radius."
+        )
+
+    if r_outer > min(nac["width"] / 2, nac["y_front"]):
+        raise ValueError(
+            "Tower ring outer radius must fit inside "
+            "the nacelle floor footprint."
+        )
+
+    outer = occ.addDisk(
+        0, 0, z_top,
+        r_outer, r_outer
+    )
+
+    inner = occ.addDisk(
+        0, 0, z_top,
+        r_inner, r_inner
+    )
+
+    ring, _ = occ.cut(
+        [(2, outer)],
+        [(2, inner)],
+        removeObject=True,
+        removeTool=True
+    )
+
+    occ.synchronize()
+
+    ring_faces = [
+        tag for dim, tag in ring if dim == 2
+    ]
+
+    if not ring_faces:
+        raise RuntimeError("Could not create tower-top ring.")
+
+    return ring_faces
 
 
 def build_default(params):
     gmsh.model.add("turbine")
+
     sections = params["tower"]["sections"]
     z_top = sections[-1]["z1"]
-    has_head = "nacelle" in params and "hub" in params
+
+    has_head = (
+        "nacelle" in params
+        and "hub" in params
+    )
+
     has_blade = has_head and "blade" in params
 
     tower = _tower_surfaces(sections)
+
     blades = []
+    ring_faces = []
+
     if has_head:
-        nac, hub = params["nacelle"], params["hub"]
-        hub_c = (0.0, hub["overhang"], z_top + nac["height"] / 2)
-        nac_faces = _nacelle_surfaces(nac, z_top, sections[-1]["d1"] / 2)
+        nac = params["nacelle"]
+        hub = params["hub"]
+
+        hub_c = (
+            0.0,
+            hub["overhang"],
+            z_top + nac["height"] / 2
+        )
+
+        nac_faces = _nacelle_surfaces(
+    nac,
+    z_top,
+    sections[-1]["d1"] / 2
+)
         hub_face = _hub_surface(hub, nac, z_top)
+
+        ring_faces = _tower_top_ring(
+            sections, nac, z_top
+        )
+
         if has_blade:
-            blades = build_blades(params["blade"], hub_c)
-        flat = [t for b in blades for t in b]
-        occ.fragment([(2, s) for s in tower + nac_faces + hub_face + flat], [])
+            blades = build_blades(
+                params["blade"], hub_c
+            )
+
+        flat_blades = [
+            tag for blade in blades for tag in blade
+        ]
+
+        # Keep the input order: ring faces are last.
+        objects = (
+            [(2, s) for s in tower]
+            + [(2, s) for s in nac_faces]
+            + [(2, s) for s in hub_face]
+            + [(2, s) for s in flat_blades]
+            + [(2, s) for s in ring_faces]
+        )
+
+        _, maps = occ.fragment(objects, [])
+
+        # The final input objects are the ring faces.
+        ring_input_start = len(objects) - len(ring_faces)
+
+        ring_tags = set()
+
+        for mapping in maps[ring_input_start:]:
+            for dim, tag in mapping:
+                if dim == 2:
+                    ring_tags.add(tag)
+
     else:
+        ring_tags = set()
         occ.removeAllDuplicates()
+
     occ.synchronize()
 
-    # ---- classify every surface, delete the pieces that lie inside others
-    groups, thickness, discard = {}, {}, []
-    n_bl = int(params["blade"].get("count", 3)) if has_blade else 0
-    az0 = params["blade"].get("azimuth_deg", 0.0) if has_blade else 0.0
-    root_r = params["blade"]["stations"][0]["chord"] / 2 if has_blade else 0.0
+    groups = {}
+    thickness = {}
+    discard = []
 
-    # tower-top circle: used to find the disc that fragment() creates inside
-    # the nacelle floor (open tower top)
+    n_bl = (
+        int(params["blade"].get("count", 3))
+        if has_blade else 0
+    )
+
+    az0 = (
+        params["blade"].get("azimuth_deg", 0.0)
+        if has_blade else 0.0
+    )
+
+    root_r = (
+        params["blade"]["stations"][0]["chord"] / 2
+        if has_blade else 0.0
+    )
+
     r_top = sections[-1]["d1"] / 2
-    disc_area = math.pi * r_top ** 2
+    disc_area = math.pi * r_top**2
 
     def in_nacelle_box(x, y, z, eps=1e-6):
-        return (abs(x) <= nac["width"] / 2 + eps and
-                nac["y_rear"] - eps <= y <= nac["y_front"] + eps and
-                z_top - eps <= z <= z_top + nac["height"] + eps)
+        return (
+            abs(x) <= nac["width"] / 2 + eps
+            and nac["y_rear"] - eps <= y <= nac["y_front"] + eps
+            and z_top - eps <= z <= z_top + nac["height"] + eps
+        )
 
-    for (_, s) in gmsh.model.getEntities(2):
+    for _, s in gmsh.model.getEntities(2):
+
         typ = gmsh.model.getType(2, s)
+
         cx, cy, cz = occ.getCenterOfMass(2, s)
-        xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, s)
+
+        xmin, ymin, zmin, xmax, ymax, zmax = (
+            gmsh.model.getBoundingBox(2, s)
+        )
+
         if has_head:
-            dist_hub = math.dist((cx, cy, cz), hub_c)
-        # Nacelle first: every surface whose centre lies inside the nacelle box
-        # (flat faces AND rounded strips), except pieces of the hub sphere.
-        if has_head and (typ != "Sphere" or dist_hub > hub["diameter"] / 2 + 0.5) \
-                and in_nacelle_box(cx, cy, cz):
-            on_front = abs(cy - nac["y_front"]) < 1e-6 and abs(ymax - ymin) < 1e-6
-            # open tower top: planar disc inside the tower-top circle, lying in
-            # the nacelle floor plane (found by position and size, not by ID)
-            on_floor_disc = (typ == "Plane"
-                             and abs(zmax - zmin) < 1e-6
-                             and abs(cz - z_top) < 1e-6
-                             and math.hypot(cx, cy) < 1e-4
-                             and abs((xmax - xmin) - 2 * r_top) < 1e-3
-                             and abs(occ.getMass(2, s) - disc_area) < 1e-3 * disc_area)
-            if on_floor_disc:
-                discard.append((2, s))        # disc inside tower-top circle
-            elif (typ == "Plane" and on_front
-                  and occ.getMass(2, s) < 0.5 * nac["width"] * nac["height"]):
-                discard.append((2, s))        # front-face disk inside the hub (by area)
-            else:
-                groups.setdefault("Nacelle", []).append(s)
-                thickness["Nacelle"] = nac["t"]
+            dist_hub = math.dist(
+                (cx, cy, cz), hub_c
+            )
+
+                 
+            # -------------------------------------------------
+        # Nacelle fillet surfaces (cylindrical)
+        # -------------------------------------------------
+        if (
+            has_head
+            and typ in ("Cylinder", "Cone")
+            and xmin >= -nac["width"] / 2 - 1e-5
+            and xmax <= nac["width"] / 2 + 1e-5
+            and ymin >= nac["y_rear"] - 1e-5
+            and ymax <= nac["y_front"] + 1e-5
+            and zmin >= z_top - 1e-5
+            and zmax <= z_top + nac["height"] + 1e-5
+        ):
+            groups.setdefault("Nacelle", []).append(s)
+            thickness["Nacelle"] = nac["t"]
+
+        # -------------------------------------------------
+        # Tower lateral surfaces
+        # -------------------------------------------------
         elif typ in ("Cone", "Cylinder"):
+
             for i, sec in enumerate(sections):
-                if sec["z0"] - 1e-6 <= cz <= sec["z1"] + 1e-6:
-                    groups.setdefault(f"Tower_{i+1}", []).append(s)
-                    thickness[f"Tower_{i+1}"] = sec["t"]
+                if (
+                    sec["z0"] - 1e-6
+                    <= cz
+                    <= sec["z1"] + 1e-6
+                ):
+                    name = f"Tower_{i + 1}"
+
+                    groups.setdefault(name, []).append(s)
+                    thickness[name] = sec["t"]
+
         elif not has_head:
             continue
+
+        # -------------------------------------------------
+        # Tower top ring
+        # -------------------------------------------------
+        elif s in ring_tags:
+
+            groups.setdefault(
+                "TowerTopRing", []
+            ).append(s)
+
+            thickness["TowerTopRing"] = nac.get(
+                "tower_ring_t", 0.03
+            )
+
+        # -------------------------------------------------
+        # Hub
+        # -------------------------------------------------
         elif typ == "Sphere":
-            small = max(xmax - xmin, ymax - ymin, zmax - zmin) < 2 * root_r + 0.3
-            if cy > nac["y_front"] and not (has_blade and small):
+
+            small = (
+                max(
+                    xmax - xmin,
+                    ymax - ymin,
+                    zmax - zmin
+                ) < 2 * root_r + 0.3
+            )
+
+            if cy > nac["y_front"] and not (
+                has_blade and small
+            ):
                 groups.setdefault("Hub", []).append(s)
                 thickness["Hub"] = hub["t"]
             else:
-                discard.append((2, s))        # inside nacelle or inside a blade root
-        elif has_blade:
-            if dist_hub < hub["diameter"] / 2:
-                discard.append((2, s))        # blade part inside the hub
+                discard.append((2, s))
+
+        # -------------------------------------------------
+        # Nacelle planar surfaces
+        # -------------------------------------------------
+        elif (
+            has_head
+            and typ != "Sphere"
+            and in_nacelle_box(cx, cy, cz)
+        ):
+
+            on_front = (
+                abs(cy - nac["y_front"]) < 1e-6
+                and abs(ymax - ymin) < 1e-6
+            )
+
+            # Remove the small floor disk inside the
+            # open tower top. The annular ring is retained
+            # separately through ring_tags.
+            on_floor_disc = (
+                abs(zmax - zmin) < 1e-6
+                and abs(cz - z_top) < 1e-6
+                and math.hypot(cx, cy) < 1e-4
+                and abs((xmax - xmin) - 2 * r_top) < 1e-3
+                and abs(
+                    occ.getMass(2, s) - disc_area
+                ) < 1e-3 * disc_area
+            )
+
+            if on_floor_disc:
+                discard.append((2, s))
+
+            elif on_front and (
+    xmax - xmin < nac["width"] * 0.99
+):
+                print(
+                    f"Discarding Nacelle front surface {s}: "
+                    f"x={xmin:.3f}..{xmax:.3f}, "
+                    f"y={ymin:.3f}..{ymax:.3f}, "
+                    f"z={zmin:.3f}..{zmax:.3f}"
+                )
+                discard.append((2, s))
+
             else:
-                # which blade? angle of the centroid in the rotor plane (X-Z)
-                ang = math.degrees(math.atan2(cx - hub_c[0], cz - hub_c[2])) % 360
-                k = int(round((ang - az0) / (360.0 / n_bl))) % n_bl
-                groups.setdefault(f"Blade_{k+1}", []).append(s)
-                thickness[f"Blade_{k+1}"] = params["blade"]["t"]
+                groups.setdefault("Nacelle", []).append(s)
+                thickness["Nacelle"] = nac["t"]
+
+        # -------------------------------------------------
+        # Blade surfaces
+        # -------------------------------------------------
+        elif has_blade:
+
+            if dist_hub < hub["diameter"] / 2:
+                discard.append((2, s))
+
+            else:
+                ang = math.degrees(
+                    math.atan2(
+                        cx - hub_c[0],
+                        cz - hub_c[2]
+                    )
+                ) % 360
+
+                k = int(
+                    round(
+                        (ang - az0) / (360.0 / n_bl)
+                    )
+                ) % n_bl
+
+                name = f"Blade_{k + 1}"
+
+                groups.setdefault(name, []).append(s)
+                thickness[name] = params["blade"]["t"]
+
     if discard:
         occ.remove(discard, recursive=False)
         occ.synchronize()
 
-    # ---- yaw: turn the nacelle, hub and blades about the tower axis (Z through
-    # the origin). The tower is round, so turning the WHOLE model is the same as
-    # turning only the head, and every shared edge stays shared.
-    # Positive yaw = counter-clockwise seen from above (right-hand rule about +Z).
-    yaw = float(params.get("yaw_deg", 0.0))
-    if has_head and abs(yaw) > 1e-9:
-        occ.rotate(gmsh.model.getEntities(), 0, 0, 0, 0, 0, 1, math.radians(yaw))
-        occ.synchronize()
-
+    # -------------------------------------------------
+    # Create physical groups
+    # -------------------------------------------------
     for name, tags in groups.items():
+        if not tags:
+            continue
+
         gmsh.model.addPhysicalGroup(2, tags, name=name)
+
     return groups, thickness

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 )
 
 from gui.project_dialog import ProjectDialog
-from gui.model_source_dialog import ModelSourceDialog
 from gui.turbine_config_dialog import TurbineConfigDialog
 from gui.components.viewport_3d import TurbineViewport
 from gui.components.loading_dialog import LoadingOverlay
@@ -74,44 +73,16 @@ class Application(QMainWindow):
         if not project_data:
             return
 
-        source_dialog = ModelSourceDialog(self)
-        if not source_dialog.exec():
+        config_dialog = TurbineConfigDialog(self)
+
+        if not config_dialog.exec():
+
             return
 
-        model_source = source_dialog.model_source
-        model_config = {}
-
-        if model_source == "builtin":
-            config_dialog = TurbineConfigDialog(self)
-            if not config_dialog.exec():
-                return
-            model_config = {
-                "model_source": "builtin",
-                "dimensions": config_dialog.dimensions,
-            }
-
-        elif model_source == "step":
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "Import STEP Model", "", "STEP Files (*.step *.stp)"
-            )
-            if not file_path:
-                return
-            step_path = Path(file_path)
-            if not step_path.is_file():
-                QMessageBox.warning(
-                    self, "Invalid STEP File", "The selected STEP file does not exist."
-                )
-                return
-            model_config = {
-                "model_source": "step",
-                "step_file": str(step_path.resolve()),
-            }
-
-        else:
-            QMessageBox.warning(
-                self, "Model Source Error", "Please select a valid model source."
-            )
-            return
+        model_config = {
+            "model_source": "builtin",
+            "dimensions": config_dialog.dimensions
+        }
 
         self.current_project = project_data
 

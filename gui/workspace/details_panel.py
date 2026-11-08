@@ -51,6 +51,19 @@ class DetailsPanel(Panel):
             self.table.setItem(r, 1, QTableWidgetItem(str(value)))
         self.table.resizeRowsToContents()
 
+    def update_section(self, name, rows):
+        """Store computed results for a named section (e.g. 'Results') and refresh if shown."""
+        self._live_sections = getattr(self, "_live_sections", {})
+        self._live_sections[name] = rows
+        if self._current == (name, "section"):
+            self.set_rows(rows)
+    def update_section(self, name, rows):
+        """Store computed results for a named section (e.g. 'Results') and refresh if shown."""
+        self._live_sections = getattr(self, "_live_sections", {})
+        self._live_sections[name] = rows
+        if self._current == (name, "section"):
+            self.set_rows(rows)
+
     def update_component(self, name, rows):
         """Store real geometry rows for a component and refresh if shown."""
         self._live[name] = rows
@@ -60,9 +73,11 @@ class DetailsPanel(Panel):
     def show_for(self, name, kind=""):
         self._current = (name, kind)
         if kind == "component" and name in self._live:
-            rows = self._live[name]
+            rows = self._live[name] 
         elif kind == "component" and name in DETAILS:
             rows = DETAILS[name]
+        elif kind == "section" and name in getattr(self, "_live_sections", {}):
+            rows = self._live_sections[name]
         elif kind == "section":
             status = next((s for label, s, _ in OUTLINE if label == name), "pending")
             rows = [("Section", name), ("Status", _STATUS_TEXT.get(status, status))]

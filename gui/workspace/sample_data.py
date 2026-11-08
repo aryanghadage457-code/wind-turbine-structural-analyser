@@ -7,7 +7,6 @@ Used until the teammates' modules are connected. Component names
 # (label, status)  status: "done" | "pending" | "locked"
 OUTLINE = [
     ("Geometry", "done", ["Tower", "Nacelle", "TowerTopRing", "Hub", "Blade 1", "Blade 2", "Blade 3"]),
-    ("Materials", "pending", []),
     ("Environment", "pending", []),
     ("Mesh", "locked", []),
     ("Solution", "locked", []),

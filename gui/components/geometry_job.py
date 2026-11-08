@@ -21,7 +21,7 @@ def _component_map(groups):
     }
 
 
-def run_job(config, queue):
+def run_job(config, queue, mesh_size=3.0, mesh_min=0.15, curvature=12):
     import gmsh
     from geometry.default_generator import build_default
 
@@ -35,10 +35,9 @@ def run_job(config, queue):
         groups, thickness = build_default(config)
         queue.put(("progress", f"Geometry built in {time.time() - t0:.1f} s. Meshing..."))
 
-        # Member 1's tested settings (about 3 s for the default turbine)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0)
-        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
-        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.15)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size)
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", curvature)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_min)
 
         t1 = time.time()
         gmsh.model.mesh.generate(2)

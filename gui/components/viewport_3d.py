@@ -9,6 +9,7 @@ import json
 import multiprocessing as mp
 import queue as queue_mod
 import traceback
+import numpy as np
 from pathlib import Path
 
 import pyvista as pv
@@ -20,15 +21,8 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 import parameters as P
 from gui.components.geometry_job import run_job
 
-COMPONENT_COLORS = {
-    "Tower": "#9A8873",
-    "Nacelle": "#D6CFC4",
-    "Hub": "#B5A28B",
-    "TowerTopRing": "#C2B59B",
-    "Blade 1": "#E6A23C",
-    "Blade 2": "#7FA38A",
-    "Blade 3": "#A78BFA",
-}
+GEOMETRY_COLOR = "#A6A6A6"
+
 BACKGROUND = "#171614"
 
 
@@ -48,9 +42,10 @@ class JobWatcher(QObject):
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, config):
+    def __init__(self, config, mesh_size=3.0):
         super().__init__()
         self.config = config
+        self.mesh_size = mesh_size
         self._cancel = False
         self._process = None
 
@@ -65,7 +60,11 @@ class JobWatcher(QObject):
         try:
             ctx = mp.get_context("spawn")
             q = ctx.Queue()
-            proc = ctx.Process(target=run_job, args=(self.config, q), daemon=True)
+            proc = ctx.Process(
+                target=run_job,
+                args=(self.config, q, self.mesh_size, min(0.15, self.mesh_size * 0.1)),
+                daemon=True,
+            )
             self._process = proc
             proc.start()
 
@@ -119,9 +118,12 @@ class TurbineViewport(QWidget):
         self.geometry_loaded = False
         self.loading = False
         self.last_details = None
+        self.mesh_size = 3.0
+        self.show_mesh_edges = False
         self._thread = None
         self._worker = None
         self._axes_visible = True
+        self.last_config = None     
 
         self.setMinimumSize(400, 350)
         self.setStyleSheet(f"background-color: {BACKGROUND};")
@@ -146,12 +148,21 @@ class TurbineViewport(QWidget):
         self.geometry_loaded = False
         self.ensure_geometry_loaded()
 
+    def apply_mesh(self, element_size):
+        """Re-mesh at the given element size and switch to a visible-edge
+        display, ANSYS-style, once the user confirms Mesh Settings."""
+        self.mesh_size = element_size
+        self.show_mesh_edges = True
+        self.geometry_loaded = False
+        self.ensure_geometry_loaded()
+
     def ensure_geometry_loaded(self):
         if self.geometry_loaded or self.loading:
             return
 
         try:
             config = self._load_config()
+            self.last_config = config            
         except Exception as exc:
             self.message_label.show()
             self.message_label.setText(
@@ -167,7 +178,7 @@ class TurbineViewport(QWidget):
         self.status_message.emit("Starting turbine geometry generation...")
 
         self._thread = QThread(self)
-        self._worker = JobWatcher(config)
+        self._worker = JobWatcher(config, mesh_size=self.mesh_size)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -233,10 +244,11 @@ class TurbineViewport(QWidget):
                 self.component_meshes[component] = mesh
                 self.actors[component] = self.plotter.add_mesh(
                     mesh,
-                    color=COMPONENT_COLORS.get(component, "#A0A0A0"),
-                    smooth_shading=True,
-                    show_edges=False,
-                    name=component,
+                    color=GEOMETRY_COLOR,
+                    smooth_shading=not self.show_mesh_edges,
+                    show_edges=self.show_mesh_edges,
+                    edge_color="#5C5C5C",
+                    name=component, 
                 )
 
             self.plotter.show_axes()
@@ -382,3 +394,35 @@ class TurbineViewport(QWidget):
     def closeEvent(self, event):
         self.shutdown()
         super().closeEvent(event)
+
+    def add_wind_indicator(self, v_ref, bearing_deg, z_hub=None):
+        """Draw an arrow showing wind direction/rough speed. Safe to call
+        repeatedly — it replaces the previous arrow rather than stacking."""
+        if self.plotter is None:
+            return
+        from solver.loads import wind_dir_vector
+        d = wind_dir_vector(bearing_deg)
+        z = z_hub if z_hub is not None else self._estimate_hub_height()
+        bounds = self.plotter.bounds
+        span = max(bounds[1] - bounds[0], bounds[3] - bounds[2], 40.0)
+        offset = span * 0.9
+        length = span * 0.35 * min(max(v_ref / 10.0, 0.4), 1.6)
+        start = np.array([0.0, 0.0, z]) - d * offset
+        arrow = pv.Arrow(start=start, direction=d, scale=length)
+        if "WindArrow" in self.actors:
+            self.plotter.remove_actor(self.actors.pop("WindArrow"))
+        self.actors["WindArrow"] = self.plotter.add_mesh(
+            arrow, color="#00B8D9", name="WindArrow"
+        )
+        self.plotter.render()
+
+    def clear_wind_indicator(self):
+        if "WindArrow" in self.actors and self.plotter is not None:
+            self.plotter.remove_actor(self.actors.pop("WindArrow"))
+            self.plotter.render()
+
+    def _estimate_hub_height(self):
+        if self.plotter is None:
+            return 90.0
+        _, _, _, _, _, zmax = self.plotter.bounds
+        return zmax * 0.7

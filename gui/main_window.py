@@ -25,6 +25,11 @@ from gui.workspace.graphics_view import GraphicsView
 from gui.workspace.outline_tree import OutlinePanel
 from gui.workspace.ribbon import Ribbon
 from gui.workspace.status_bar import StatusBar
+from gui.components.wind_dialog import WindSettingsDialog
+from gui.components.solve_job import SolveRunner
+from gui.components.mesh_dialog import MeshSettingsDialog
+from gui.components.results_loader import load_result, build_result_rows
+from failure_analysis import format_report
 
 
 class MainWindow(QMainWindow):
@@ -44,6 +49,7 @@ class MainWindow(QMainWindow):
             f"{self.project_name} - Wind Turbine Structural Analyser"
         )
         self.setMinimumSize(1100, 700)
+        self._solver = None 
 
         # ---------- widgets ----------
         self.ribbon = Ribbon(self.project_name)
@@ -52,6 +58,7 @@ class MainWindow(QMainWindow):
         self.dock = BottomDock()
         self.details = DetailsPanel()
         self.status = StatusBar()
+        
 
         built_elsewhere = viewport is not None
         self.viewport = viewport if built_elsewhere else TurbineViewport(self.project_data)
@@ -145,7 +152,9 @@ class MainWindow(QMainWindow):
             self.details.update_component(name, rows)
         self.outline.tree.set_status("Geometry", "done")
         self.dock.add_message("Geometry details updated from the generated model.")
+        self.ribbon.set_action_enabled("solve.run", True)
 
+        
     def _apply_view(self, key):
         result = self.viewport.set_view(key)
         if key == "wireframe":
@@ -163,14 +172,37 @@ class MainWindow(QMainWindow):
         if action_id in ("geometry.generate", "geometry.reload"):
             self.viewport.reload()
             return
+
+        
         if action_id.startswith("view."):
             key = action_id.split(".", 1)[1]
             if key == "axes":
                 visible = self.viewport.toggle_axes()
                 self.dock.log(f"Axes {'shown' if visible else 'hidden'}")
+
             else:
                 self._apply_view(key)
             return
+
+        if action_id == "setup.wind":
+            self._open_wind_dialog()
+            return
+
+        if action_id == "setup.mesh":
+            self._open_mesh_dialog()
+            return  
+
+        if action_id == "solve.run":
+            self._start_solve()
+            return
+        if action_id == "solve.cancel":
+            self._cancel_solve()
+            return
+        if action_id == "results.failure":
+            self.outline.tree.select("Results")
+            return  
+
+        
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
 
     def _save_progress(self):
@@ -212,6 +244,114 @@ class MainWindow(QMainWindow):
         """Called by the owner before this window is discarded."""
         self.viewport.shutdown()
 
+    def _open_wind_dialog(self):
+        current = self.project_data.get("wind", {})
+        dialog = WindSettingsDialog(
+            v_ref=current.get("v_ref", 8.0),
+            bearing_deg=current.get("bearing_deg", 0.0),
+            parent=self,
+        )
+        dialog.values_changed.connect(self._preview_wind)
+        if dialog.exec():
+            self.project_data["wind"] = {
+                "v_ref": dialog.v_ref,
+                "bearing_deg": dialog.bearing_deg,
+            }
+            self.dock.add_message(
+                f"Wind set: {dialog.v_ref:g} m/s from {dialog.bearing_deg:g}°."
+            )
+            self.outline.tree.set_status("Environment", "done")
+        else:
+            # Restore whatever was showing before the live preview
+            wind = self.project_data.get("wind")
+            if wind:
+                self.viewport.add_wind_indicator(wind["v_ref"], wind["bearing_deg"])
+            else:
+                self.viewport.clear_wind_indicator()
+
+    def _preview_wind(self, v_ref, bearing_deg):
+        self.viewport.add_wind_indicator(v_ref, bearing_deg)
+
+    def _open_mesh_dialog(self):
+        current = self.project_data.get("mesh", {})
+        dialog = MeshSettingsDialog(
+            element_size=current.get("element_size", 3.0),
+            parent=self,
+        )
+        if dialog.exec():
+            self.project_data["mesh"] = {"element_size": dialog.element_size}
+            self.dock.add_message(f"Mesh element size set: {dialog.element_size:g} m.")
+            self.outline.tree.set_status("Mesh", "done")
+            self.viewport.apply_mesh(dialog.element_size)
+
+    def _start_solve(self):
+        wind = self.project_data.get("wind")
+        mesh = self.project_data.get("mesh")
+        if not mesh:
+            self.dock.add_message("Set mesh settings before solving.", "warning")
+            self._open_mesh_dialog()
+            return
+        if not wind:
+            self.dock.add_message("Set wind conditions before solving.", "warning")
+            self._open_wind_dialog()
+            return
+        if not self.viewport.last_config:
+            self.dock.add_message("Geometry must be generated before solving.", "warning")
+            return
+        
+        project_path = self.project_data.get("project_path")
+        if not project_path:
+            self.dock.add_message("This project has no folder on disk; cannot solve.", "error")
+            return
+
+        self.ribbon.set_action_enabled("solve.run", False)
+        self.ribbon.set_action_enabled("solve.cancel", True)
+        self.status.set_status("Solving...")
+        self.dock.add_message(
+            f"Starting solve at {wind['v_ref']:g} m/s from {wind['bearing_deg']:g}°..."
+        )
+
+        self._solver = SolveRunner(
+            project_path, self.viewport.last_config,
+            wind["v_ref"], wind["bearing_deg"],
+            mesh_size=mesh["element_size"],
+            ccx_path=self.project_data.get("ccx_path"),
+        )
+        self._solver.progress.connect(lambda line: self.dock.log(line))
+        self._solver.finished.connect(self._on_solve_finished)
+        self._solver.start()
+
+    def _cancel_solve(self):
+        if self._solver is not None:
+            self._solver.cancel()
+            self.dock.add_message("Solve cancelled.", "warning")
+
+    def _on_solve_finished(self, success, out_dir):
+        self.ribbon.set_action_enabled("solve.run", True)
+        self.ribbon.set_action_enabled("solve.cancel", False)
+        self._solver = None
+        if success:
+            self.status.set_status("Solved")
+            self.outline.tree.set_status("Solution", "done")
+            self.dock.add_message(f"Solve complete. Results in {out_dir}.")
+
+            result = load_result(out_dir)
+            if result is not None:
+                rows = build_result_rows(result)
+                self.details.update_section("Results", rows)
+                self.outline.tree.set_status("Results", "done")
+                self.dock.add_message(format_report(result))
+            else:
+                self.dock.add_message(
+                    "Solve finished but no failure_assessment.json was found.", "warning"
+                )
+
+            self.ribbon.set_action_enabled("results.stress", True)
+            self.ribbon.set_action_enabled("results.displacement", True)
+            self.ribbon.set_action_enabled("results.failure", True)
+        else:
+            self.status.set_status("Solve failed")
+            self.dock.add_message("Solve failed. Check the Log tab for details.", "error")
 
 if __name__ == "__main__":
     import sys

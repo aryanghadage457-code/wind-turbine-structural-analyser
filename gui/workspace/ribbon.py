@@ -39,14 +39,10 @@ TABS = {
         ("Display", [("view.axes", "Axes", "mesh", True, True, True)]),
     ],
     "Geometry": [
-        ("Model", [("geometry.builtin", "Built-in\nModel", "turbine", True),
-                   ("geometry.step", "Import\nSTEP", "step", True)]),
         ("Edit", [("geometry.dimensions", "Dimensions", "dimensions", True)]),
     ],
     "Setup": [
-        ("Materials", [("setup.material", "Material", "material", True)]),
-        ("Environment", [("setup.wind", "Wind", "wind", True),
-                         ("setup.air", "Air", "air", True)]),
+        ("Environment", [("setup.wind", "Wind", "wind", True)]),
         ("Mesh", [("setup.mesh", "Mesh\nSettings", "mesh", True)]),
     ],
     "Solution": [

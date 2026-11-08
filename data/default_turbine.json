@@ -34,8 +34,8 @@
     ]
   },
   "nacelle": {
-    "y_rear": -10,
-    "y_front": 3,
+    "y_rear": -10.3,
+    "y_front": 3.7,
     "width": 5.2,
     "height": 4.8,
     "t": 0.02,

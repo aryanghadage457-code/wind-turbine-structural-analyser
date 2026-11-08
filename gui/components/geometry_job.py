@@ -14,6 +14,7 @@ def _component_map(groups):
         "Tower": [n for n in groups if n.startswith("Tower_")],
         "Nacelle": ["Nacelle"],
         "Hub": ["Hub"],
+        "TowerTopRing": ["TowerTopRing"],
         "Blade 1": ["Blade_1"],
         "Blade 2": ["Blade_2"],
         "Blade 3": ["Blade_3"],

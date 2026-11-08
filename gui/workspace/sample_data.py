@@ -6,7 +6,7 @@ Used until the teammates' modules are connected. Component names
 
 # (label, status)  status: "done" | "pending" | "locked"
 OUTLINE = [
-    ("Geometry", "done", ["Tower", "Nacelle", "Hub", "Blade 1", "Blade 2", "Blade 3"]),
+    ("Geometry", "done", ["Tower", "Nacelle", "TowerTopRing", "Hub", "Blade 1", "Blade 2", "Blade 3"]),
     ("Materials", "pending", []),
     ("Environment", "pending", []),
     ("Mesh", "locked", []),
@@ -29,6 +29,8 @@ DETAILS = {
                 ("Mesh", "Not generated"), ("Status", "Not analysed")],
     "default": [("Selection", "Nothing selected"),
                 ("Hint", "Select an item in the Outline")],
+    "TowerTopRing": [("Component", "Tower Top Ring"), ("Material", "Not assigned"),
+                      ("Mesh", "Not generated"), ("Status", "Not analysed")],
 }
 
 LOG_MESSAGES = [

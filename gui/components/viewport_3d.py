@@ -24,6 +24,7 @@ COMPONENT_COLORS = {
     "Tower": "#9A8873",
     "Nacelle": "#D6CFC4",
     "Hub": "#B5A28B",
+    "TowerTopRing": "#C2B59B",
     "Blade 1": "#E6A23C",
     "Blade 2": "#7FA38A",
     "Blade 3": "#A78BFA",

@@ -21,8 +21,8 @@ BACKGROUND = "#171614"
 
 # Scalar-bar styling — light backing panel + dark bold text so the legend
 # reads clearly regardless of what colours the contour itself uses.
-_BAR_BG = (0.95, 0.94, 0.91)      # near-white panel behind the legend
-_BAR_BG_OPACITY = 0.85
+_BAR_BG = (1.0, 1.0, 1.0)         # pure white
+_BAR_BG_OPACITY = 1.0             # fully opaque, not just tinted
 _BAR_TEXT = (0.09, 0.086, 0.078)  # dark text on that panel
 
 STRESS_QUANTITIES = {

@@ -200,7 +200,13 @@ class MainWindow(QMainWindow):
             return
         if action_id == "results.failure":
             self.outline.tree.select("Results")
-            return  
+            return
+        if action_id == "results.stress":
+            self._show_results_view("Von Mises")
+            return
+        if action_id == "results.displacement":
+            self._show_results_view("Displacement")
+            return
 
         
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
@@ -352,6 +358,31 @@ class MainWindow(QMainWindow):
         else:
             self.status.set_status("Solve failed")
             self.dock.add_message("Solve failed. Check the Log tab for details.", "error")
+
+    def _show_results_view(self, default_quantity=None):
+        from pathlib import Path
+        from gui.components.results_data import load_results_data
+        from gui.components.results_viewer import ResultsViewer
+
+        project_path = self.project_data.get("project_path")
+        if not project_path:
+            self.dock.add_message("No project folder to load results from.", "warning")
+            return
+
+        data = load_results_data(Path(project_path) / "out")
+        if data is None:
+            self.dock.add_message("No solve results found. Run Solve first.", "warning")
+            return
+
+        viewer = ResultsViewer(data)
+        viewer.status_message.connect(self.dock.add_message)
+        if default_quantity:
+            idx = viewer.quantity_box.findText(default_quantity)
+            if idx >= 0:
+                viewer.quantity_box.setCurrentIndex(idx)
+
+        self.graphics.set_viewport(viewer)
+        self.graphics.set_caption("Results")
 
 if __name__ == "__main__":
     import sys

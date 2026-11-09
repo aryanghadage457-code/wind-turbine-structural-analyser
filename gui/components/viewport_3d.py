@@ -42,10 +42,14 @@ class JobWatcher(QObject):
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, config, mesh_size=3.0):
+    def __init__(self, config, stage="geometry", mesh_size=1.0,
+                 mesh_base_size=0.5, mesh_refine_distance=6.0):
         super().__init__()
         self.config = config
+        self.stage = stage
         self.mesh_size = mesh_size
+        self.mesh_base_size = mesh_base_size
+        self.mesh_refine_distance = mesh_refine_distance
         self._cancel = False
         self._process = None
 
@@ -62,7 +66,8 @@ class JobWatcher(QObject):
             q = ctx.Queue()
             proc = ctx.Process(
                 target=run_job,
-                args=(self.config, q, self.mesh_size, min(0.15, self.mesh_size * 0.1)),
+                args=(self.config, q, self.stage, self.mesh_size,
+                      self.mesh_base_size, self.mesh_refine_distance),
                 daemon=True,
             )
             self._process = proc
@@ -118,8 +123,11 @@ class TurbineViewport(QWidget):
         self.geometry_loaded = False
         self.loading = False
         self.last_details = None
-        self.mesh_size = 3.0
-        self.show_mesh_edges = False
+        self.mesh_stage = "geometry"
+        self.mesh_size = 1.0
+        self.mesh_base_size = 0.5
+        self.mesh_refine_distance = 6.0
+        self.show_mesh_edges = False    
         self._thread = None
         self._worker = None
         self._axes_visible = True
@@ -149,8 +157,9 @@ class TurbineViewport(QWidget):
         self.ensure_geometry_loaded()
 
     def apply_mesh(self, element_size):
-        """Re-mesh at the given element size and switch to a visible-edge
-        display, ANSYS-style, once the user confirms Mesh Settings."""
+        """Build the REAL analysis mesh (solver/mesh.py) at this element
+        size and display it, replacing the quick preview."""
+        self.mesh_stage = "mesh"
         self.mesh_size = element_size
         self.show_mesh_edges = True
         self.geometry_loaded = False
@@ -178,7 +187,13 @@ class TurbineViewport(QWidget):
         self.status_message.emit("Starting turbine geometry generation...")
 
         self._thread = QThread(self)
-        self._worker = JobWatcher(config, mesh_size=self.mesh_size)
+        self._worker = JobWatcher(
+            config,
+            stage=self.mesh_stage,
+            mesh_size=self.mesh_size,
+            mesh_base_size=self.mesh_base_size,
+            mesh_refine_distance=self.mesh_refine_distance,
+        )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -248,7 +263,7 @@ class TurbineViewport(QWidget):
                     smooth_shading=not self.show_mesh_edges,
                     show_edges=self.show_mesh_edges,
                     edge_color="#5C5C5C",
-                    name=component, 
+                    name=component,
                 )
 
             self.plotter.show_axes()

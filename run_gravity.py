@@ -17,7 +17,7 @@ from solver.loads import orient_turbine
 from pathlib import Path
 
 from contracts import Settings
-from solver import bcs, links
+from solver import bcs
 from solver.mesh import calculate_s6_areas
 from solver.ccx_writer import (
     write_inp,
@@ -128,94 +128,94 @@ if __name__ == "__main__":
     # -------------------------------------------------
 
     # Hub: select nodes near the rear pole.
-    hub_nodes = component_nodes(mesh, "Hub")
+    # hub_nodes = component_nodes(mesh, "Hub")
 
     z_top = float(params["tower"]["sections"][-1]["z1"])
     nac = params["nacelle"]
-    hub_cfg = params["hub"]
-    hub_target = np.array([0.0, float(hub_cfg["overhang"]) - float(hub_cfg["diameter"]) / 2.0, z_top + float(nac["height"]) / 2.0])
+    # hub_cfg = params["hub"]
+    # hub_target = np.array([0.0, float(hub_cfg["overhang"]) - float(hub_cfg["diameter"]) / 2.0, z_top + float(nac["height"]) / 2.0])
 
-    hub_distance = np.linalg.norm(
-        mesh.nodes[hub_nodes] - hub_target,
-        axis=1
-    )
+    # hub_distance = np.linalg.norm(
+    #     mesh.nodes[hub_nodes] - hub_target,
+    #     axis=1
+    # )
 
-    pa = hub_nodes[hub_distance <= 1.0]
+    # pa = hub_nodes[hub_distance <= 1.0]
 
-    # Nacelle: select nodes near the centre of its front plate.
-    nacelle_nodes = component_nodes(mesh, "Nacelle")
+    # # Nacelle: select nodes near the centre of its front plate.
+    # nacelle_nodes = component_nodes(mesh, "Nacelle")
 
-    nacelle_xyz = mesh.nodes[nacelle_nodes]
+    # nacelle_xyz = mesh.nodes[nacelle_nodes]
 
-    pb = nacelle_nodes[
-        (np.abs(nacelle_xyz[:, 1] - float(nac["y_front"])) < 1e-5) &
-        (np.abs(nacelle_xyz[:, 0]) <= float(nac["width"]) / 2.0) &
-        (np.abs(nacelle_xyz[:, 2] - (z_top + float(nac["height"]) / 2.0)) <= float(nac["height"]) / 2.0)
-    ]
+    # pb = nacelle_nodes[
+    #     (np.abs(nacelle_xyz[:, 1] - float(nac["y_front"])) < 1e-5) &
+    #     (np.abs(nacelle_xyz[:, 0]) <= float(nac["width"]) / 2.0) &
+    #     (np.abs(nacelle_xyz[:, 2] - (z_top + float(nac["height"]) / 2.0)) <= float(nac["height"]) / 2.0)
+    # ]
 
-    print("\n--- INITIAL PATCH SELECTION ---")
-    print("Hub patch nodes:", len(pa))
-    print("Nacelle patch nodes:", len(pb))
+    # print("\n--- INITIAL PATCH SELECTION ---")
+    # print("Hub patch nodes:", len(pa))
+    # print("Nacelle patch nodes:", len(pb))
 
-    print("\n--- HUB PATCH COORDINATES ---")
+    # print("\n--- HUB PATCH COORDINATES ---")
 
-    if len(pa):
-        print(
-            "X range:",
-            mesh.nodes[pa, 0].min(),
-            mesh.nodes[pa, 0].max()
-        )
-        print(
-            "Y range:",
-            mesh.nodes[pa, 1].min(),
-            mesh.nodes[pa, 1].max()
-        )
-        print(
-            "Z range:",
-            mesh.nodes[pa, 2].min(),
-            mesh.nodes[pa, 2].max()
-        )
+    # if len(pa):
+    #     print(
+    #         "X range:",
+    #         mesh.nodes[pa, 0].min(),
+    #         mesh.nodes[pa, 0].max()
+    #     )
+    #     print(
+    #         "Y range:",
+    #         mesh.nodes[pa, 1].min(),
+    #         mesh.nodes[pa, 1].max()
+    #     )
+    #     print(
+    #         "Z range:",
+    #         mesh.nodes[pa, 2].min(),
+    #         mesh.nodes[pa, 2].max()
+    #     )
 
-    print("\n--- NACELLE PATCH COORDINATES ---")
+    # print("\n--- NACELLE PATCH COORDINATES ---")
 
-    if len(pb):
-        print(
-            "X range:",
-            mesh.nodes[pb, 0].min(),
-            mesh.nodes[pb, 0].max()
-        )
-        print(
-            "Y range:",
-            mesh.nodes[pb, 1].min(),
-            mesh.nodes[pb, 1].max()
-        )
-        print(
-            "Z range:",
-            mesh.nodes[pb, 2].min(),
-            mesh.nodes[pb, 2].max()
-        )
+    # if len(pb):
+    #     print(
+    #         "X range:",
+    #         mesh.nodes[pb, 0].min(),
+    #         mesh.nodes[pb, 0].max()
+    #     )
+    #     print(
+    #         "Y range:",
+    #         mesh.nodes[pb, 1].min(),
+    #         mesh.nodes[pb, 1].max()
+    #     )
+    #     print(
+    #         "Z range:",
+    #         mesh.nodes[pb, 2].min(),
+    #         mesh.nodes[pb, 2].max()
+    #     )
 
-    # Expand each patch by one element row.
-    pa = links.add_rows(mesh, pa, 1, "Hub")
-    pb = links.add_rows(mesh, pb, 1, "Nacelle")
+    # # Expand each patch by one element row.
+    # pa = links.add_rows(mesh, pa, 1, "Hub")
+    # pb = links.add_rows(mesh, pb, 1, "Nacelle")
 
-    print("\n--- EXPANDED PATCHES ---")
-    print("Hub patch nodes:", len(pa))
-    print("Nacelle patch nodes:", len(pb))
+    # print("\n--- EXPANDED PATCHES ---")
+    # print("Hub patch nodes:", len(pa))
+    # print("Nacelle patch nodes:", len(pb))
 
-    # Create the rigid link.
-    LINKS = [
-        links.make_link(
-            mesh,
-            "HUB_NACELLE",
-            "Hub",
-            pa,
-            "Nacelle",
-            pb
-        )
-    ]
+    # # Create the rigid link.
+    # LINKS = [
+    #     links.make_link(
+    #         mesh,
+    #         "HUB_NACELLE",
+    #         "Hub",
+    #         pa,
+    #         "Nacelle",
+    #         pb
+    #     )
+    # ]
 
-    print("\nHub-Nacelle rigid link created successfully.")
+    # print("\nHub-Nacelle rigid link created successfully.")
 
     # -------------------------------------------------
     # COMPONENT CONNECTION CHECK
@@ -298,8 +298,7 @@ if __name__ == "__main__":
     bcs.preflight(
         mesh,
         thickness,
-        expected_base_radius=float(params["tower"]["sections"][0]["d0"]) / 2.0,
-        links=LINKS
+        expected_base_radius=float(params["tower"]["sections"][0]["d0"]) / 2.0
     )
 
     # -------------------------------------------------

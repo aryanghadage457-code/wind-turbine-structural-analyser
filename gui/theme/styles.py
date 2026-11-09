@@ -656,7 +656,7 @@ QPushButton#FileTab {
     color: $on_primary;
     border: none;
     border-radius: 0px;
-    padding: 9px 26px;
+    padding: 6px 20px;
     font-weight: bold;
 }
 

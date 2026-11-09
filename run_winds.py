@@ -16,7 +16,7 @@ import gmsh
 import numpy as np
 
 from contracts import Settings
-from solver import bcs, links
+from solver import bcs
 from solver.ccx_writer import write_inp
 from solver.ccx_runner import run_ccx
 from solver import ccx_reader as R
@@ -148,61 +148,61 @@ if __name__ == "__main__":
     # -------------------------------------------------
 
     # Hub: select nodes near the rear pole.
-    hub_nodes = component_nodes(mesh, "Hub")
+    # hub_nodes = component_nodes(mesh, "Hub")
 
     z_top = float(params["tower"]["sections"][-1]["z1"])
     nac = params["nacelle"]
-    hub_cfg = params["hub"]
-    hub_target = np.array([0.0, float(hub_cfg["overhang"]) - float(hub_cfg["diameter"]) / 2.0, z_top + float(nac["height"]) / 2.0])
+    # hub_cfg = params["hub"]
+    # hub_target = np.array([0.0, float(hub_cfg["overhang"]) - float(hub_cfg["diameter"]) / 2.0, z_top + float(nac["height"]) / 2.0])
 
-    hub_distance = np.linalg.norm(
-        mesh.nodes[hub_nodes] - hub_target,
-        axis=1
-    )
+    # hub_distance = np.linalg.norm(
+    #     mesh.nodes[hub_nodes] - hub_target,
+    #     axis=1
+    # )
 
-    pa = hub_nodes[hub_distance <= 1.0]
+    # pa = hub_nodes[hub_distance <= 1.0]
 
-    # Nacelle: select nodes near the centre of its front plate.
-    nacelle_nodes = component_nodes(mesh, "Nacelle")
+    # # Nacelle: select nodes near the centre of its front plate.
+    # nacelle_nodes = component_nodes(mesh, "Nacelle")
 
-    nacelle_xyz = mesh.nodes[nacelle_nodes]
+    # nacelle_xyz = mesh.nodes[nacelle_nodes]
 
-    pb = nacelle_nodes[
-        (np.abs(nacelle_xyz[:, 1] - float(nac["y_front"])) < 1e-5) &
-        (np.abs(nacelle_xyz[:, 0]) <= float(nac["width"]) / 2.0) &
-        (np.abs(nacelle_xyz[:, 2] - (z_top + float(nac["height"]) / 2.0)) <= float(nac["height"]) / 2.0)
-    ]
+    # pb = nacelle_nodes[
+    #     (np.abs(nacelle_xyz[:, 1] - float(nac["y_front"])) < 1e-5) &
+    #     (np.abs(nacelle_xyz[:, 0]) <= float(nac["width"]) / 2.0) &
+    #     (np.abs(nacelle_xyz[:, 2] - (z_top + float(nac["height"]) / 2.0)) <= float(nac["height"]) / 2.0)
+    # ]
 
-    print("\n--- INITIAL PATCH SELECTION ---")
-    print("Hub patch nodes:", len(pa))
-    print("Nacelle patch nodes:", len(pb))
+    # print("\n--- INITIAL PATCH SELECTION ---")
+    # print("Hub patch nodes:", len(pa))
+    # print("Nacelle patch nodes:", len(pb))
 
-    if len(pa) == 0 or len(pb) == 0:
-        raise RuntimeError(
-            "Hub or Nacelle rigid-link patch selection failed."
-        )
+    # if len(pa) == 0 or len(pb) == 0:
+    #     raise RuntimeError(
+    #         "Hub or Nacelle rigid-link patch selection failed."
+    #     )
 
-    # Expand each patch by one element row.
-    pa = links.add_rows(mesh, pa, 1, "Hub")
-    pb = links.add_rows(mesh, pb, 1, "Nacelle")
+    # # Expand each patch by one element row.
+    # pa = links.add_rows(mesh, pa, 1, "Hub")
+    # pb = links.add_rows(mesh, pb, 1, "Nacelle")
 
-    print("\n--- EXPANDED PATCHES ---")
-    print("Hub patch nodes:", len(pa))
-    print("Nacelle patch nodes:", len(pb))
+    # print("\n--- EXPANDED PATCHES ---")
+    # print("Hub patch nodes:", len(pa))
+    # print("Nacelle patch nodes:", len(pb))
 
-    # Create the rigid link.
-    LINKS = [
-        links.make_link(
-            mesh,
-            "HUB_NACELLE",
-            "Hub",
-            pa,
-            "Nacelle",
-            pb
-        )
-    ]
+    # # Create the rigid link.
+    # LINKS = [
+    #     links.make_link(
+    #         mesh,
+    #         "HUB_NACELLE",
+    #         "Hub",
+    #         pa,
+    #         "Nacelle",
+    #         pb
+    #     )
+    # ]
 
-    print("\nHub-Nacelle rigid link created successfully.")
+    # print("\nHub-Nacelle rigid link created successfully.")
 
     # -------------------------------------------------
     # COMPONENT CONNECTION CHECK
@@ -285,8 +285,7 @@ if __name__ == "__main__":
     bcs.preflight(
         mesh,
         thickness,
-        expected_base_radius=float(params["tower"]["sections"][0]["d0"]) / 2.0,
-        links=LINKS
+        expected_base_radius=float(params["tower"]["sections"][0]["d0"]) / 2.0
     )
 
     # -------------------------------------------------

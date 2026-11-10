@@ -99,32 +99,50 @@ Screenshots and short GIF recordings make it easier for a new user to understand
 | Tabular/data support | openpyxl |
 
 
-# Project Structure
-The repository is organised into the following main modules:
+## Project Structure
+
+The repository is organized into the following modules and files:
+
+```text
 wind-turbine-structural-analyser/
-├── data/                  # Default turbine configuration and reference data
-├── geometry/              # Turbine geometry generation
+│
+├── data/                  # Default turbine configurations and reference data
+├── geometry/              # Wind turbine geometry generation
 ├── gui/                   # PySide6 application and GUI components
-├── media/                 # README screenshots and demonstration GIFs
-├── out/                   # Generated analysis outputs and cached results
+├── media/                 # Screenshots and demonstration GIFs
+├── out/                   # Generated analysis outputs and sample results
 ├── solver/                # Meshing, boundary conditions, loads and CalculiX interface
-├── visualization/         # Mesh conversion, contours and element result utilities
+├── visualization/         # Mesh conversion, contour plots and element-level result utilities
+│
 ├── main.py                # Desktop application entry point
-├── parameters.py          # Analysis and turbine parameter handling
-├── project_manager.py     # Project management utilities
-├── contracts.py           # Shared data structures
+├── parameters.py          # Turbine and analysis parameter handling
+├── project_manager.py     # Project creation and management utilities
+├── contracts.py           # Shared data structures and interfaces
+│
 ├── run_analysis.py        # End-to-end command-line analysis workflow
-├── run_gravity.py         # Gravity analysis workflow
-├── run_winds.py           # Reference-wind analysis workflow
-├── StressAndStrain.py     # Combined stress/strain post-processing
+├── run_gravity.py         # Gravity loading analysis workflow
+├── run_winds.py           # Wind loading analysis workflow
+│
+├── StressAndStrain.py     # Combined stress and strain post-processing
 ├── failure_analysis.py    # Failure assessment calculations and reporting
 ├── analysis_metadata.py   # Analysis result metadata utilities
-├── requirements.txt      # Pinned Python dependencies
+│
+├── requirements.txt       # Python dependencies
 ├── check_mesh.py          # Mesh checking utility
 ├── test_mesh.py           # Mesh test entry point
 ├── test_viewport.py       # Viewport test entry point
-├── .gitignore
-└── README.md
+│
+├── .gitignore             # Git ignore rules
+└── README.md              # Project documentation
+```
+
+### Analysis Output Directory
+
+The `out/` directory stores generated solver and post-processing files, including mesh data, CalculiX results, stress and strain results, and failure assessment reports.
+
+New analyses can generate their own output files. The committed sample results can also be used to inspect previously completed analyses without immediately running a new simulation.
+
+**Note:** Do not manually remove files from `out/` without first checking whether they are required by the application's results-loading or visualization workflows.
 The out/ directory contains generated solver and post-processing files. A new analysis can generate its own outputs; the committed sample outputs, when present, can also be useful for inspecting an existing run. Do not remove files from out/ without first checking whether the relevant project workflow needs them.
 # Requirements
 - Windows is the development platform used for the current project setup.

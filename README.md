@@ -222,14 +222,12 @@ The analysis output directory may contain files such as:
 | `failure_assessment.json` | Failure-assessment summary and related data |
 The GUI's results viewer expects full_mesh.pkl and stress_strain_results.npz in the selected project's out/ directory. Gravity and wind result pickles are also used when displacement data is available. A solve should be completed before trying to inspect results for a project that does not yet contain these files.
 # Team and Responsibilities
-Replace the name placeholders with the actual names of all team members before submission.
 | Team member | Main contribution |
 |---|---|
 | **Bhukya.Sai kumar** | Turbine geometry, parameterisation, and geometry/mesh generation contributions |
 | **Aryan Pandurang ghadage** | Boundary conditions, loading, CalculiX integration, solver workflow, and structural connectivity utilities |
 | **Bandari Santhan**  | Stress/strain post-processing, failure assessment, and result visualisation |
 | **Beera Charan teja**  | Desktop GUI, application architecture, integration of team modules, and project workflow |
-Update these descriptions to match the final responsibilities agreed by the team.
 # Limitations and Engineering Disclaimer
 - The failure assessment includes elastic first-yield screening. It is an academic analysis aid and is not a certified turbine design verification.
 - Buckling information is reported when a buckling assessment has actually been performed; otherwise the application may indicate that it was not checked.

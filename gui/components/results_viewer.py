@@ -1,0 +1,244 @@
+"""Results viewer: embeds a PyVista plotter with a stress/strain/displacement
+contour, a quantity/surface toolbar, and the reusable Element Details panel
+below it. Swapped into GraphicsView in place of the geometry viewport once
+a solve has completed.
+
+The Details/Mohr's-circle panel is hidden by default so the 3D view gets
+the full pane; use the toolbar toggle to show it alongside.
+"""
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QComboBox, QFrame, QHBoxLayout, QLabel, QToolButton,
+    QVBoxLayout, QWidget,
+)
+from pyvistaqt import QtInteractor
+
+from visualization import contour_plots as cp
+from visualization.contour_plots import enable_element_selection
+
+def _finite(value):
+    return value == value and abs(value) != float("inf")
+
+BACKGROUND = "#171614"
+
+# Scalar-bar styling — light backing panel + dark bold text so the legend
+# reads clearly regardless of what colours the contour itself uses.
+_BAR_BG = (1.0, 1.0, 1.0)         # pure white
+_BAR_BG_OPACITY = 1.0             # fully opaque, not just tinted
+_BAR_TEXT = (0.09, 0.086, 0.078)  # dark text on that panel
+
+STRESS_QUANTITIES = {
+    "Von Mises": lambda p, g, r, surf, sub: cp.plot_von_mises(p, g, r, surface=surf),
+    "Max Shear Stress": lambda p, g, r, surf, sub: cp.plot_max_shear_stress(p, g, r, surface=surf),
+    "Mean Stress": lambda p, g, r, surf, sub: cp.plot_mean_stress(p, g, r, surface=surf),
+    "Principal Stress": lambda p, g, r, surf, sub: cp.plot_principal_stress(p, g, r, component=sub, surface=surf),
+    "Stress Component": lambda p, g, r, surf, sub: cp.plot_stress_component(p, g, r, component=sub, surface=surf),
+}
+STRAIN_QUANTITIES = {
+    "Equivalent Strain": lambda p, g, r, surf, sub: cp.plot_equivalent_strain(p, g, r, surface=surf),
+    "Max Shear Strain": lambda p, g, r, surf, sub: cp.plot_max_shear_strain(p, g, r, surface=surf),
+    "Principal Strain": lambda p, g, r, surf, sub: cp.plot_principal_strain(p, g, r, component=sub, surface=surf),
+    "Strain Component": lambda p, g, r, surf, sub: cp.plot_strain_component(p, g, r, component=sub, surface=surf),
+}
+SUB_OPTIONS = {
+    "Principal Stress": ["max", "intermediate", "min"],
+    "Principal Strain": ["max", "intermediate", "min"],
+    "Stress Component": ["xx", "yy", "zz", "xy", "xz", "yz"],
+    "Strain Component": ["xx", "yy", "zz", "xy", "xz", "yz"],
+    "Displacement": ["magnitude", "x", "y", "z"],
+}
+
+
+class ResultsViewer(QWidget):
+
+    status_message = Signal(str)
+    element_selected = Signal(int)
+    show_details_requested = Signal()
+
+    def __init__(self, results_data, parent=None):
+        super().__init__(parent)
+        self.results_data = results_data
+        self._picking_enabled = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("GraphicsToolbar")
+        toolbar.setFixedHeight(40)
+        t = QHBoxLayout(toolbar)
+        t.setContentsMargins(10, 0, 10, 0)
+        t.setSpacing(8)
+
+        quantities = list(STRESS_QUANTITIES) + list(STRAIN_QUANTITIES)
+        if results_data.displacement is not None:
+            quantities.append("Displacement")
+
+        self.quantity_box = QComboBox()
+        self.quantity_box.addItems(quantities)
+        self.quantity_box.currentTextChanged.connect(self._on_quantity_changed)
+
+        self.sub_box = QComboBox()
+        self.sub_box.currentTextChanged.connect(self._refresh)
+        self.sub_box.setVisible(False)
+
+        self.surface_box = QComboBox()
+        self.surface_box.addItems(["outer", "inner"])
+        self.surface_box.currentTextChanged.connect(self._refresh)
+        # surface is now chosen from the ribbon, not shown anywhere — this
+        # combo is never added to a layout and must never be shown/hidden.
+
+        self.details_button = QToolButton()
+        self.details_button.setObjectName("ViewButton")
+        self.details_button.setText("Details && Mohr's Circle \u2192")
+        self.details_button.clicked.connect(self.show_details_requested.emit)
+
+        t.addWidget(QLabel("Quantity:"))
+        t.addWidget(self.quantity_box)
+        t.addWidget(self.sub_box)
+        t.addStretch()
+        t.addWidget(self.details_button)
+        root.addWidget(toolbar)
+
+        self.plotter = QtInteractor(self)
+        self.plotter.set_background(BACKGROUND)
+        root.addWidget(self.plotter.interactor, 1)
+
+        self._on_quantity_changed(self.quantity_box.currentText())
+
+    def _on_quantity_changed(self, quantity):
+        options = SUB_OPTIONS.get(quantity)
+        self.sub_box.blockSignals(True)
+        self.sub_box.clear()
+        if options:
+            self.sub_box.addItems(options)
+            self.sub_box.setVisible(True)
+        else:
+            self.sub_box.setVisible(False)
+        self.sub_box.blockSignals(False)
+        self._refresh()
+
+    def _refresh(self):
+        quantity = self.quantity_box.currentText()
+        surface = self.surface_box.currentText()
+        sub = self.sub_box.currentText() if self.sub_box.isVisible() else None
+
+        self.plotter.clear()
+        self._picking_enabled = False  # clear() may drop the contour actor; re-attach below
+
+        before = len(self.plotter.renderer.actors)
+
+        try:
+            if quantity == "Displacement":
+                if self.results_data.displacement is None:
+                    self.status_message.emit("No displacement data available for this solve.")
+                    return
+                cp.plot_displacement(
+                    self.plotter, self.results_data.grid,
+                    self.results_data.displacement, component=sub or "magnitude",
+                )
+            else:
+                func = STRESS_QUANTITIES.get(quantity) or STRAIN_QUANTITIES.get(quantity)
+                func(self.plotter, self.results_data.grid, self.results_data.results, surface, sub)
+        except Exception as exc:
+            self.status_message.emit(f"Could not display {quantity}: {exc}")
+            return
+
+        after = len(self.plotter.renderer.actors)
+        if after <= before:
+            # The call didn't raise, but nothing was actually added to the
+            # scene — this is the "blank view" symptom, not a crash.
+            self.status_message.emit(
+                f"{quantity} ({surface}) produced no geometry to display — "
+                "likely missing or empty data for this surface/component in contour_plots.py."
+            )
+            return
+
+        if quantity != "Displacement":
+            # Element picking needs the per-element contour grid, not the
+            # displacement (nodal) one, so only enable it for stress/strain.
+            enable_element_selection(
+                self.plotter, self.results_data.grid,
+                on_element_selected=self._on_element_selected,
+            )
+
+        self._brighten_scalar_bar()
+        self.plotter.view_isometric()
+        self.plotter.reset_camera()
+        self.plotter.render()
+        self.status_message.emit(f"Showing {quantity}" + (f" ({surface})" if quantity != "Displacement" else "") + ".")
+
+
+    def _on_element_selected(self, original_cell_id, element_id):
+        self.element_selected.emit(original_cell_id)
+
+    def set_surface(self, surface):
+        """Called from the ribbon's Outer/Inner buttons."""
+        idx = self.surface_box.findText(surface)
+        if idx >= 0:
+            self.surface_box.setCurrentIndex(idx)
+
+    def _brighten_scalar_bar(self):
+        """Light backing panel, bold title + value labels, readable
+        against the dark 3D background. Fixed label count and a clean
+        format so the numbers never overlap or drop into scientific
+        notation, and enough height/position margin that neither the
+        title nor the top tick label gets clipped."""
+        try:
+            for actor in self.plotter.scalar_bars.values():
+                actor.SetNumberOfLabels(5)
+                actor.SetLabelFormat(self._label_format())
+
+                title_tp = actor.GetTitleTextProperty()
+                title_tp.SetFontSize(14)
+                title_tp.SetColor(*_BAR_TEXT)
+                title_tp.SetBold(True)
+                title_tp.SetShadow(False)
+
+                actor.UnconstrainedFontSizeOn()
+                label_tp = actor.GetLabelTextProperty()
+                label_tp.SetFontSize(13)
+                label_tp.SetColor(*_BAR_TEXT)
+                label_tp.SetBold(True)
+                label_tp.SetShadow(False)
+
+                actor.DrawBackgroundOn()
+                bg = actor.GetBackgroundProperty()
+                bg.SetColor(*_BAR_BG)
+                bg.SetOpacity(_BAR_BG_OPACITY)
+                actor.SetWidth(0.13)
+                actor.SetHeight(0.55)
+                actor.SetPosition(0.84, 0.20)
+        except Exception:
+            pass
+
+    def _label_format(self):
+        """Pick a fixed-decimal format from the active data range, instead
+        of VTK's default variable-precision one (the source of the
+        "0.000349" / truncated-digit labels)."""
+        try:
+            mapper = self.plotter.mapper
+            rng = mapper.GetScalarRange() if mapper is not None else None
+        except Exception:
+            rng = None
+        if not rng or not all(map(_finite, rng)):
+            return "%.2f"
+        span = abs(rng[1] - rng[0])
+        if span == 0:
+            return "%.2f"
+        if span >= 100:
+            return "%.0f"
+        if span >= 1:
+            return "%.1f"
+        if span >= 0.001:
+            return "%.4f"
+        return "%.2e"
+
+
+    def shutdown(self):
+        if self.plotter is not None:
+            try:
+                self.plotter.close()
+            except Exception:
+                pass

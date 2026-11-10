@@ -8,14 +8,13 @@ the full pane; use the toolbar toggle to show it alongside.
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QSplitter, QToolButton,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QToolButton,
     QVBoxLayout, QWidget,
 )
 from pyvistaqt import QtInteractor
 
 from visualization import contour_plots as cp
 from visualization.contour_plots import enable_element_selection
-from gui.components.element_details_panel import ElementDetailsPanel
 
 def _finite(value):
     return value == value and abs(value) != float("inf")
@@ -53,6 +52,8 @@ SUB_OPTIONS = {
 class ResultsViewer(QWidget):
 
     status_message = Signal(str)
+    element_selected = Signal(int)
+    show_details_requested = Signal()
 
     def __init__(self, results_data, parent=None):
         super().__init__(parent)
@@ -88,47 +89,23 @@ class ResultsViewer(QWidget):
         # surface is now chosen from the ribbon, not shown anywhere — this
         # combo is never added to a layout and must never be shown/hidden.
 
-        self.details_toggle = QToolButton()
-        self.details_toggle.setObjectName("ViewButton")
-        self.details_toggle.setText("Details && Mohr's Circle")
-        self.details_toggle.setCheckable(True)
-        self.details_toggle.toggled.connect(self._toggle_details)
+        self.details_button = QToolButton()
+        self.details_button.setObjectName("ViewButton")
+        self.details_button.setText("Details && Mohr's Circle \u2192")
+        self.details_button.clicked.connect(self.show_details_requested.emit)
 
         t.addWidget(QLabel("Quantity:"))
         t.addWidget(self.quantity_box)
         t.addWidget(self.sub_box)
         t.addStretch()
-        t.addWidget(self.details_toggle)
+        t.addWidget(self.details_button)
         root.addWidget(toolbar)
-
-        self.splitter = QSplitter(Qt.Vertical)
 
         self.plotter = QtInteractor(self)
         self.plotter.set_background(BACKGROUND)
-        self.splitter.addWidget(self.plotter.interactor)
-
-        self.details_panel = ElementDetailsPanel()
-        self.details_panel.set_results_data(self.results_data)
-        self.splitter.addWidget(self.details_panel)
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 0)
-        self.splitter.setCollapsible(0, False)
-        self.splitter.setCollapsible(1, True)
-        # Start collapsed: the 3D view gets the whole pane until the user
-        # asks for Details/Mohr's circle via the toolbar toggle.
-        self.splitter.setSizes([1, 0])
-        root.addWidget(self.splitter, 1)
+        root.addWidget(self.plotter.interactor, 1)
 
         self._on_quantity_changed(self.quantity_box.currentText())
-
-    def _toggle_details(self, checked):
-        if checked:
-            total = max(self.splitter.height(), 500)
-            self.splitter.setSizes([int(total * 0.55), int(total * 0.45)])
-            self.details_toggle.setText("Hide Details & Mohr's Circle")
-        else:
-            self.splitter.setSizes([max(self.splitter.height(), 1), 0])
-            self.details_toggle.setText("Details && Mohr's Circle")
 
     def _on_quantity_changed(self, quantity):
         options = SUB_OPTIONS.get(quantity)
@@ -194,9 +171,7 @@ class ResultsViewer(QWidget):
 
 
     def _on_element_selected(self, original_cell_id, element_id):
-        self.details_panel.show_element(original_cell_id)
-        if not self.details_toggle.isChecked():
-            self.details_toggle.setChecked(True)
+        self.element_selected.emit(original_cell_id)
 
     def set_surface(self, surface):
         """Called from the ribbon's Outer/Inner buttons."""

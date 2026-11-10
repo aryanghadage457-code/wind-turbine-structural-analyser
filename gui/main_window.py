@@ -29,6 +29,7 @@ from gui.components.wind_dialog import WindSettingsDialog
 from gui.components.solve_job import SolveRunner
 from gui.components.mesh_dialog import MeshSettingsDialog
 from gui.components.results_loader import load_result, build_result_rows
+from gui.turbine_config_dialog import TurbineConfigDialog
 from failure_analysis import format_report
 
 
@@ -154,6 +155,48 @@ class MainWindow(QMainWindow):
         self.outline.tree.set_status("Geometry", "done")
         self.dock.add_message("Geometry details updated from the generated model.")
         self.ribbon.set_action_enabled("solve.run", True)
+        self.details.update_section("Geometry", self._geometry_overview_rows(details_by_component))
+
+    def _geometry_overview_rows(self, details_by_component):
+        rows = [
+            ("Components", f"{len(details_by_component)} ({', '.join(sorted(details_by_component))})"),
+            ("Model source", self.project_data.get("model_source", "builtin")),
+        ]
+        values = getattr(self.viewport, "last_values", None) or {}
+        if values:
+            import parameters as P
+            for key, spec in P.PARAMETERS.items():
+                if key not in values:
+                    continue
+                val = values[key]
+                text = f"{val:g}" if isinstance(val, float) else str(val)
+                unit = spec.get("unit")
+                if unit:
+                    text += f" {unit}"
+                rows.append((spec.get("label", key), text))
+        return rows
+        self.details.update_section("Geometry", self._geometry_overview_rows(details_by_component))
+
+    def _geometry_overview_rows(self, details_by_component):
+        rows = [("Components", f"{len(details_by_component)} ({', '.join(sorted(details_by_component))})")]
+        dims = self.project_data.get("dimensions") or {}
+        tower, nacelle, rotor = dims.get("tower", {}), dims.get("nacelle", {}), dims.get("rotor", {})
+        if tower:
+            rows.append(("Tower height",
+                         f"{tower.get('height', '—')} m" if tower.get("height") is not None else "—"))
+            rows.append(("Tower base / top diameter",
+                         f"{tower.get('base_diameter', '—')} / {tower.get('top_diameter', '—')} m"))
+        if rotor:
+            rows.append(("Blade length",
+                         f"{rotor.get('blade_length', '—')} m" if rotor.get("blade_length") is not None else "—"))
+            rows.append(("Hub diameter",
+                         f"{rotor.get('hub_diameter', '—')} m" if rotor.get("hub_diameter") is not None else "—"))
+        if nacelle:
+            rows.append(("Nacelle L x W x H",
+                         f"{nacelle.get('length', '—')} x {nacelle.get('width', '—')} x "
+                         f"{nacelle.get('height', '—')} m"))
+        rows.append(("Model source", self.project_data.get("model_source", "builtin")))
+        return rows
 
         
     def _apply_view(self, key):
@@ -172,6 +215,10 @@ class MainWindow(QMainWindow):
             return
         if action_id in ("geometry.generate", "geometry.reload"):
             self.viewport.reload()
+            return
+
+        if action_id == "geometry.dimensions":
+            self._open_dimensions_dialog()
             return
 
         
@@ -274,6 +321,12 @@ class MainWindow(QMainWindow):
             self._solver.cancel()
             self._solver = None
 
+    @staticmethod
+    def _compass_label(bearing_deg):
+        dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+        return dirs[int((bearing_deg % 360.0) / 22.5 + 0.5) % 16]
+
     def _open_wind_dialog(self):
         current = self.project_data.get("wind", {})
         dialog = WindSettingsDialog(
@@ -291,6 +344,12 @@ class MainWindow(QMainWindow):
                 f"Wind set: {dialog.v_ref:g} m/s from {dialog.bearing_deg:g}°."
             )
             self.outline.tree.set_status("Environment", "done")
+            self.details.update_section("Environment", [
+                ("Wind speed", f"{dialog.v_ref:g} m/s"),
+                ("Direction (from)",
+                 f"{dialog.bearing_deg:g}\u00b0 ({self._compass_label(dialog.bearing_deg)})"),
+                ("Status", "Defined"),
+            ])
         else:
             # Restore whatever was showing before the live preview
             wind = self.project_data.get("wind")
@@ -313,6 +372,65 @@ class MainWindow(QMainWindow):
             self.dock.add_message(f"Mesh element size set: {dialog.element_size:g} m.")
             self.outline.tree.set_status("Mesh", "done")
             self.viewport.apply_mesh(dialog.element_size)
+            self.details.update_section("Mesh", [
+                ("Scoping", "Whole turbine (1 body)"),
+                ("Element size", f"{dialog.element_size:g} m"),
+                ("Status", "Defined"),
+            ])
+
+
+    def _open_dimensions_dialog(self):
+        if self.viewport.loading:
+            self.dock.add_message("Geometry is already being generated; please wait.", "warning")
+            return
+        current = self._load_saved_dimensions()
+        dialog = TurbineConfigDialog(self, initial_values=current)
+        if not dialog.exec():
+            return
+        self.project_data["dimensions"] = dialog.dimensions
+        self._save_model_config(dialog.dimensions)
+        self.dock.add_message("Turbine dimensions updated. Rebuilding geometry...")
+        self.outline.tree.set_status("Geometry", "pending")
+        self.viewport.reload()
+
+    def _load_saved_dimensions(self):
+        import json
+        from pathlib import Path
+
+        project_path = self.project_data.get("project_path")
+        if not project_path:
+            return None
+        path = Path(project_path) / "config" / "model_config.json"
+        if not path.exists():
+            return None
+        try:
+            model_config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        dims = model_config.get("dimensions")
+        return dims if isinstance(dims, dict) and dims else None
+
+    def _save_model_config(self, dimensions):
+        import json
+        from pathlib import Path
+
+        project_path = self.project_data.get("project_path")
+        if not project_path:
+            return
+        config_dir = Path(project_path) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        path = config_dir / "model_config.json"
+        model_config = {}
+        if path.exists():
+            try:
+                model_config = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                model_config = {}
+        model_config["model_source"] = model_config.get(
+            "model_source", self.project_data.get("model_source", "builtin")
+        )
+        model_config["dimensions"] = dimensions
+        path.write_text(json.dumps(model_config, indent=4), encoding="utf-8")
 
     def _start_solve(self):
         wind = self.project_data.get("wind")
@@ -340,6 +458,12 @@ class MainWindow(QMainWindow):
         self.dock.add_message(
             f"Starting solve at {wind['v_ref']:g} m/s from {wind['bearing_deg']:g}°..."
         )
+        self.details.update_section("Solution", [
+            ("Status", "Running..."),
+            ("Wind speed", f"{wind['v_ref']:g} m/s"),
+            ("Direction (from)", f"{wind['bearing_deg']:g}\u00b0"),
+            ("Mesh element size", f"{mesh['element_size']:g} m"),
+        ])
 
         self._solver = SolveRunner(
             project_path, self.viewport.last_config,
@@ -364,6 +488,10 @@ class MainWindow(QMainWindow):
             self.status.set_status("Solved")
             self.outline.tree.set_status("Solution", "done")
             self.dock.add_message(f"Solve complete. Results in {out_dir}.")
+            self.details.update_section("Solution", [
+                ("Status", "Complete"),
+                ("Output folder", str(out_dir)),
+            ])
 
             result = load_result(out_dir)
             if result is not None:
@@ -386,6 +514,9 @@ class MainWindow(QMainWindow):
         else:
             self.status.set_status("Solve failed")
             self.dock.add_message("Solve failed. Check the Log tab for details.", "error")
+            self.details.update_section("Solution", [
+                ("Status", "Failed — see Log tab"),
+            ])
 
     def _show_results_view(self, default_quantity=None):
         from pathlib import Path
@@ -404,6 +535,11 @@ class MainWindow(QMainWindow):
 
         viewer = ResultsViewer(data)
         viewer.status_message.connect(self.dock.add_message)
+        viewer.element_selected.connect(self.dock.show_element_details)
+        viewer.show_details_requested.connect(
+            lambda: self.dock.setCurrentWidget(self.dock.details_page)
+        )
+        self.dock.set_element_results_data(data)
         if default_quantity:
             idx = viewer.quantity_box.findText(default_quantity)
             if idx >= 0:

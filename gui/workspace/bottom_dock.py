@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from gui.components.element_details_panel import ElementDetailsPanel
 from gui.theme.styles import COLORS
 from gui.workspace.sample_data import LOG_MESSAGES
 from gui.workspace.utilisation_plot import UtilisationPlot
@@ -61,8 +62,20 @@ class BottomDock(QTabWidget):
         self.log_view.setMaximumBlockCount(5000)
         self.addTab(self.log_view, "Log")
 
+        # ---- Details & Mohr's Circle ----
+        self.element_details = ElementDetailsPanel()
+        self.details_page = self.element_details
+        self.addTab(self.element_details, "Details && Mohr's Circle")
+
         for text in LOG_MESSAGES:
             self.add_message(text)
+
+    def set_element_results_data(self, results_data):
+        self.element_details.set_results_data(results_data)
+
+    def show_element_details(self, element_index):
+        self.element_details.show_element(element_index)
+        self.setCurrentWidget(self.details_page)
 
     def add_message(self, text, level="info"):
         row = self.messages.rowCount()

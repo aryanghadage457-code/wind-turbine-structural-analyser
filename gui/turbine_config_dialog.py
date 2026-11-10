@@ -35,7 +35,7 @@ def _parameter_specs():
 
 class TurbineConfigDialog(QDialog):
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_values=None):
         super().__init__(parent)
         self.setWindowTitle("Turbine Configuration")
         self.setMinimumSize(580, 700)
@@ -44,7 +44,10 @@ class TurbineConfigDialog(QDialog):
         self._inputs = {}
 
         self._build()
-        self._reset()
+        if initial_values:
+            self.set_values(initial_values)
+        else:
+            self._reset()
 
     # ------------------------------------------------------------------
     def _build(self):
@@ -158,10 +161,15 @@ class TurbineConfigDialog(QDialog):
 
     def _reset(self):
         defaults = P.default_values()
+        self.set_values(defaults)
+
+    def set_values(self, values):
+        """Pre-fill every input from a flat {field_name: value} dict (e.g.
+        the project's saved dimensions). Unknown keys are ignored."""
         for key, spin in self._inputs.items():
-            if key in defaults:
+            if key in values:
                 spin.blockSignals(True)
-                spin.setValue(float(defaults[key]))
+                spin.setValue(float(values[key]))
                 spin.blockSignals(False)
         self._revalidate()
 

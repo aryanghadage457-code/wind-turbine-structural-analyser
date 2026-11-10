@@ -131,7 +131,8 @@ class TurbineViewport(QWidget):
         self._thread = None
         self._worker = None
         self._axes_visible = True
-        self.last_config = None     
+        self.last_config = None
+        self.last_values = None    
 
         self.setMinimumSize(400, 350)
         self.setStyleSheet(f"background-color: {BACKGROUND};")
@@ -233,6 +234,7 @@ class TurbineViewport(QWidget):
             raise ValueError("; ".join(errors))
         for w in warnings:
             self.status_message.emit(f"Warning: {w}")
+        self.last_values = values
         return P.apply_to_config(values)
 
     # ------------------------------------------------------------------

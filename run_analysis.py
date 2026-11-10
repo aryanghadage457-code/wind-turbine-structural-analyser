@@ -165,8 +165,11 @@ def main(argv=None):
           "--wind-direction", str(args.wind_direction % 360.0),
           "--save-npz", str(npz_path), "--no-export", "--no-display"], env,
          "Combined stress/strain post-processing")
+    g_mesh_obj = _load_pickle(g_mesh_path)
+    group_thickness = g_mesh_obj[1] if isinstance(g_mesh_obj, tuple) and len(g_mesh_obj) > 1 else None
     failure = assess_npz(npz_path, yield_strength_pa=args.yield_strength,
-                         safety_factor=args.safety_factor, output_path=out / "failure_assessment.json")
+                         safety_factor=args.safety_factor, output_path=out / "failure_assessment.json",
+                         mesh=g_mesh, group_thickness=group_thickness)
     print("\n=== Analysis complete ===")
     print(f"Operating wind speed: {args.wind_speed:g} m/s | reference: {V_REF:g} m/s | direction FROM: {args.wind_direction % 360:g} deg")
     print(f"Geometry fingerprint: {config_hash}")

@@ -11,7 +11,7 @@ That makes the von Mises stress of each element an exact quadratic in s,
 
     vm^2(s) = a + b*s + c*s^2 ,   a = q(G,G),  b = 2 q(G,W),  c = q(W,W),
 
-where q is the von Mises quadratic form.  The wind speed at which any element
+where q is the von Mises quadratic form.  The wind speed    at which any element
 reaches a stress limit is therefore found in closed form (no sampling, no search).
 On top of the single-point check at the operating speed this gives:
 
@@ -182,7 +182,7 @@ def _as_surfaces(d, name):
 def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strength_pa=345e6, safety_factor=1.5,
                          mesh=None, group_thickness=None, young_modulus_pa=210e9, buckling_knockdown=0.2,
                          enable_buckling=True, top_n=20, n_curve_points=101, wind_reference_loads=None,
-                         metadata=None):
+                         metadata=None, exclude_groups=("Hub", "Nacelle")):
     """Full failure screening from gravity and reference-wind stress arrays.
 
     gravity, wind_ref : {"outer": (E,6), "inner": (E,6) or None} in Pa. wind_ref is the UNSCALED stress of the
@@ -214,6 +214,17 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
     if mesh is not None and mesh.n_elems != n_el:
         raise ValueError(f"mesh has {mesh.n_elems} elements but stress arrays have {n_el}")
 
+    excluded_mask = np.zeros(n_el, dtype=bool)
+    if mesh is not None and exclude_groups:
+        _names_all = [str(n) for n in mesh.group_names]
+        _idx_all = np.asarray(mesh.elem_group)
+        _excl_idx = {i for i, n in enumerate(_names_all) if n in exclude_groups}
+        if _excl_idx:
+            excluded_mask = np.isin(_idx_all, list(_excl_idx))
+    included_mask = ~excluded_mask
+    if mesh is not None and exclude_groups and not included_mask.any():
+        raise ValueError("exclude_groups excludes every element; nothing left to screen")
+
     allowable = yield_strength_pa / safety_factor
     s_op = (v_operating / v_ref) ** 2
     coeff = {s: vm_coefficients(g_s[s], w_s[s]) for s in surfaces}
@@ -222,18 +233,22 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
     vm_surf = np.stack([vm_at_scale(*coeff[s], s_op) for s in surfaces])          # (S, E)
     vm_el = vm_surf.max(axis=0)
     surf_of_el = vm_surf.argmax(axis=0)
-    gov = int(np.argmax(vm_el))
+    vm_el_screened = np.where(included_mask, vm_el, -np.inf)
+    gov = int(np.argmax(vm_el_screened))
     vm_max = float(vm_el[gov])
     utilisation = vm_max / allowable
     vm_grav = np.stack([np.sqrt(np.maximum(coeff[s][0], 0.0)) for s in surfaces]).max(axis=0)
+    vm_grav_screened = np.where(included_mask, vm_grav, -np.inf)
 
     # --- closed-form limit speeds per element --------------------------------------------------------------
     s_yield_surf = np.stack([scale_at_limit(*coeff[s], yield_strength_pa) for s in surfaces])
     s_allow = np.stack([scale_at_limit(*coeff[s], allowable) for s in surfaces]).min(axis=0)
     s_yield = s_yield_surf.min(axis=0)
+    s_yield_screened = np.where(included_mask, s_yield, np.inf)
+    s_allow_screened = np.where(included_mask, s_allow, np.inf)
     v_yield_el = _speed_from_scale(s_yield, v_ref)
     v_allow_el = _speed_from_scale(s_allow, v_ref)
-    i_fail, i_allow = int(np.argmin(s_yield)), int(np.argmin(s_allow))
+    i_fail, i_allow = int(np.argmin(s_yield_screened)), int(np.argmin(s_allow_screened))
     v_fail, v_allow = float(v_yield_el[i_fail]), float(v_allow_el[i_allow])
     fail_surface = surfaces[int(np.argmin(s_yield_surf[:, i_fail]))]
 
@@ -266,9 +281,9 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
         "governing_group": group_of(gov),
         "governing_location_m": loc_of(gov),
         "status": "EXCEEDS_ALLOWABLE" if utilisation > 1 else "WITHIN_ALLOWABLE",
-        "gravity_only": {"maximum_von_mises_pa": float(vm_grav.max()),
-                         "utilization": float(vm_grav.max() / allowable),
-                         "governing_element_index_0_based": int(np.argmax(vm_grav))},
+        "gravity_only": {"maximum_von_mises_pa": float(vm_grav_screened.max()),
+                         "utilization": float(vm_grav_screened.max() / allowable),
+                         "governing_element_index_0_based": int(np.argmax(vm_grav_screened))},
         "failure_speed": {
             "v_fail_m_s": _finite_or_none(v_fail),
             "v_allow_m_s": _finite_or_none(v_allow),
@@ -302,6 +317,7 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
             mask = groups_idx == gi
             if not mask.any():
                 continue
+            is_excluded = bool(exclude_groups) and name in exclude_groups
             ids = np.flatnonzero(mask)
             loc = int(ids[np.argmax(vm_el[mask])])
             result["groups"].append({
@@ -312,13 +328,21 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
                 "governing_surface": surfaces[int(surf_of_el[loc])],
                 "v_fail_m_s": _finite_or_none(v_yield_el[mask].min()),
                 "v_allow_m_s": _finite_or_none(v_allow_el[mask].min()),
-                "status": "EXCEEDS_ALLOWABLE" if vm_el[loc] / allowable > 1 else "WITHIN_ALLOWABLE",
+                "status": ("EXCLUDED_RIGID_BODY" if is_excluded else
+                           "EXCEEDS_ALLOWABLE" if vm_el[loc] / allowable > 1 else "WITHIN_ALLOWABLE"),
+                "excluded_from_screening": is_excluded,
                 "thickness_m": (float(group_thickness[name]) if group_thickness and name in group_thickness
                                 else None),
             })
+        if exclude_groups and excluded_mask.any():
+            result["limitations"].append(
+                f"{', '.join(exclude_groups)} modelled as rigid bodies (solver/rigid_head.py) and excluded "
+                "from the governing-element / failure-speed screening; any stress reported for them is an "
+                "MPC-coupling artefact, not a real structural result.")
 
     # --- ranked critical elements --------------------------------------------------------------------------
-    order = np.argsort(-vm_el, kind="stable")[:int(max(0, min(top_n, n_el)))]
+    order = np.argsort(-vm_el_screened, kind="stable")
+    order = order[included_mask[order]][:int(max(0, min(top_n, int(included_mask.sum()))))]
     result["top_elements"] = [{
         "rank": r + 1, "element_index_0_based": int(i), "calculix_element_id_1_based": int(i) + 1,
         "group": group_of(int(i)), "surface": surfaces[int(surf_of_el[i])],
@@ -328,7 +352,7 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
 
     fields = {"utilisation_von_mises": vm_el / allowable, "von_mises_pa": vm_el,
               "failure_speed_m_s": v_yield_el, "allowable_speed_m_s": v_allow_el,
-              "von_mises_gravity_only_pa": vm_grav}
+              "von_mises_gravity_only_pa": vm_grav, "_excluded_mask": excluded_mask}
 
     # --- buckling screening --------------------------------------------------------------------------------
     buck = _buckling(g_s, w_s, surfaces, mesh, group_thickness, young_modulus_pa, buckling_knockdown,
@@ -348,7 +372,9 @@ def assess_stress_fields(*, gravity, wind_ref, v_ref, v_operating, yield_strengt
         cands.append(1.5 * v_ref)
     v_axis = np.linspace(0.0, math.ceil(max(cands) / 5.0) * 5.0, int(max(11, n_curve_points)))
     s_axis = (v_axis / v_ref) ** 2
-    vm_curve = np.stack([vm_at_scale(*coeff[s], s_axis[:, None]).max(axis=1) for s in surfaces]).max(axis=0)
+    vm_curve = np.stack([
+        vm_at_scale(*coeff[s], s_axis[:, None])[:, included_mask].max(axis=1) for s in surfaces
+    ]).max(axis=0)
     result["curve"] = {
         "wind_speed_m_s": [float(x) for x in v_axis],
         "max_von_mises_pa": [float(x) for x in vm_curve],
@@ -514,7 +540,7 @@ def _split_stress(data, gravity_result, wind_result, v_op, v_ref):
 def assess_npz(npz_path, *, yield_strength_pa=345e6, safety_factor=1.5, output_path=None,
                mesh=None, group_thickness=None, gravity_result=None, wind_result=None,
                young_modulus_pa=None, buckling_knockdown=0.2, enable_buckling=True,
-               top_n=20, fields_path=None):
+               top_n=20, fields_path=None, exclude_groups=("Hub", "Nacelle")):
     """Assess the combined stress/strain NPZ written by StressAndStrain.py.
 
     Optional `gravity_result` / `wind_result` (contracts.SolveResult) supply the unscaled reference-wind stress;
@@ -548,8 +574,8 @@ def assess_npz(npz_path, *, yield_strength_pa=345e6, safety_factor=1.5, output_p
                 yield_strength_pa=yield_strength_pa, safety_factor=safety_factor, mesh=mesh,
                 group_thickness=group_thickness, young_modulus_pa=young_modulus_pa,
                 buckling_knockdown=buckling_knockdown, enable_buckling=enable_buckling,
-                top_n=top_n, wind_reference_loads=loads, metadata=metadata)
-            _crosscheck_saved_vm(result, data)
+                top_n=top_n, wind_reference_loads=loads, metadata=metadata, exclude_groups=exclude_groups)
+            _crosscheck_saved_vm(result, data, excluded_mask=(fields or {}).get("_excluded_mask"))
     buckling = result.get("buckling") or {}
     result["overall_status"] = ("EXCEEDS_ALLOWABLE" if "EXCEEDS_ALLOWABLE" in (result["status"],
                                 buckling.get("status")) else "WITHIN_ALLOWABLE")
@@ -559,16 +585,27 @@ def assess_npz(npz_path, *, yield_strength_pa=345e6, safety_factor=1.5, output_p
         path.write_text(json.dumps(result, indent=2, default=_json_default), encoding="utf-8")
     if fields_path and fields:
         Path(fields_path).parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(fields_path, **fields)
+        np.savez_compressed(fields_path, **{k: v for k, v in fields.items() if not k.startswith("_")})
     return result
 
 
-def _crosscheck_saved_vm(result, data):
-    """Flag in the result if the recomputed von Mises disagrees with the NPZ's own saved arrays."""
-    saved = [float(np.max(data[k])) for k in ("outer_von_mises", "inner_von_mises") if k in data.files]
-    if not saved:
+def _crosscheck_saved_vm(result, data, excluded_mask=None):
+    """Flag in the result if the recomputed von Mises disagrees with the NPZ's own saved arrays.
+
+    When elements are excluded (rigid bodies), the saved NPZ arrays still cover every element, so they
+    are masked the same way before comparing — otherwise an excluded group's higher raw stress always
+    looks like a mismatch.
+    """
+    saved_arrays = [np.asarray(data[k], float) for k in ("outer_von_mises", "inner_von_mises") if k in data.files]
+    if not saved_arrays:
         return
-    saved, mine = max(saved), result["maximum_von_mises_pa"]
+    if excluded_mask is not None and np.any(excluded_mask):
+        included = ~excluded_mask
+        saved_arrays = [a[included] for a in saved_arrays if a.shape[0] == excluded_mask.shape[0]]
+        if not saved_arrays:
+            return
+    saved = max(float(np.max(a)) for a in saved_arrays if a.size)
+    mine = result["maximum_von_mises_pa"]
     if saved > 0 and abs(saved - mine) > 1e-6 * saved:
         result["limitations"].append(
             f"WARNING: recomputed max von Mises ({mine:.6g} Pa) differs from the saved NPZ value ({saved:.6g} Pa).")

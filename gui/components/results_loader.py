@@ -46,6 +46,23 @@ def build_result_rows(result):
 
     if buck.get("performed"):
         rows.append(("Tower buckling", f"{buck['status']} (util. {buck['utilization']:.3f})"))
+        rows.append(("Buckling first-yield speed", _speed(buck.get("v_fail_m_s"))))
+        rows.append(("Buckling allowable speed (SF applied)", _speed(buck.get("v_allow_m_s"))))
+        rows.append(("Buckling governing group", buck.get("governing_group") or "N/A"))
+
+        stress_allow = fs.get("v_allow_m_s")
+        buck_allow = buck.get("v_allow_m_s")
+        if stress_allow is not None and buck_allow is not None:
+            if buck_allow < stress_allow:
+                rows.append((
+                    "Governing failure mode",
+                    f"Buckling ({buck_allow:.1f} m/s) governs before stress ({stress_allow:.1f} m/s)."
+                ))
+            else:
+                rows.append((
+                    "Governing failure mode",
+                    f"Stress ({stress_allow:.1f} m/s) governs before buckling ({buck_allow:.1f} m/s)."
+                ))
     else:
         rows.append(("Tower buckling", f"Not checked ({buck.get('reason', 'n/a')})"))
 

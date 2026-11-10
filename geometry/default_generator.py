@@ -333,6 +333,7 @@ def build_default(params):
     )
 
     r_top = sections[-1]["d1"] / 2
+    r_ring_outer = nac.get("tower_ring_outer_radius", 2.4) if has_head else 0.0
     disc_area = math.pi * r_top**2
 
     def in_nacelle_box(x, y, z, eps=1e-6):
@@ -444,14 +445,14 @@ def build_default(params):
             # Remove the small floor disk inside the
             # open tower top. The annular ring is retained
             # separately through ring_tags.
+            corner_r = max(
+                math.hypot(xmin, ymin), math.hypot(xmin, ymax),
+                math.hypot(xmax, ymin), math.hypot(xmax, ymax),
+            )
             on_floor_disc = (
                 abs(zmax - zmin) < 1e-6
                 and abs(cz - z_top) < 1e-6
-                and math.hypot(cx, cy) < 1e-4
-                and abs((xmax - xmin) - 2 * r_top) < 1e-3
-                and abs(
-                    occ.getMass(2, s) - disc_area
-                ) < 1e-3 * disc_area
+                and corner_r < r_ring_outer + 1e-3
             )
 
             if on_floor_disc:

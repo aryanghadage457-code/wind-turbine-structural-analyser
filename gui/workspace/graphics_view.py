@@ -85,7 +85,7 @@ class GraphicsView(QFrame):
         row = QHBoxLayout(header)
         row.setContentsMargins(12, 0, 12, 0)
 
-        title = QLabel("GRAPHICS")
+        title = QLabel("3D VIEWPORT")
         title.setObjectName("PanelTitle")
         self.caption = QLabel("")
         self.caption.setObjectName("PanelSubtitle")

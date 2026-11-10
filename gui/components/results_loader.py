@@ -11,8 +11,11 @@ def _mpa(pa):
 
 
 def _speed(v):
-    return f"{v:.1f} m/s" if v is not None else "Not reached"
-
+    if v is None:
+        return "Not reached"
+    if v <= 0.0:
+        return "0.0 m/s — exceeded under gravity alone"
+    return f"{v:.1f} m/s"
 
 def load_result(out_dir):
     path = Path(out_dir) / "failure_assessment.json"
@@ -36,7 +39,10 @@ def build_result_rows(result):
         ("Governing surface", result.get("governing_surface", "N/A")),
         ("First-yield speed", _speed(fs.get("v_fail_m_s"))),
         ("Allowable speed (SF applied)", _speed(fs.get("v_allow_m_s"))),
+        ("Failure note", fs.get("message", "")),
     ]
+
+
 
     if buck.get("performed"):
         rows.append(("Tower buckling", f"{buck['status']} (util. {buck['utilization']:.3f})"))

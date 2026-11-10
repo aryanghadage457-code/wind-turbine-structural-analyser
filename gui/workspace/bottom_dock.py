@@ -7,6 +7,8 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+
+
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QPlainTextEdit, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme.styles import COLORS
 from gui.workspace.sample_data import LOG_MESSAGES
+from gui.workspace.utilisation_plot import UtilisationPlot
 
 _LEVEL_COLOR = {
     "info": COLORS["text2"],
@@ -43,15 +46,11 @@ class BottomDock(QTabWidget):
         self.messages.setAlternatingRowColors(True)
         self.addTab(self.messages, "Messages")
 
-        # ---- Graphs (placeholder) ----
+        # ---- Graphs ----
         graphs = QWidget()
         g_layout = QVBoxLayout(graphs)
-        note = QLabel("Stress profile, Mohr's circles and the utilisation "
-                      "curve will appear here after a solution.")
-        note.setObjectName("SecondaryText")
-        note.setAlignment(Qt.AlignCenter)
-        note.setWordWrap(True)
-        g_layout.addWidget(note)
+        self.utilisation_plot = UtilisationPlot()
+        g_layout.addWidget(self.utilisation_plot)
         self.graphs_page = graphs
         self.addTab(graphs, "Graphs")
 
@@ -81,4 +80,14 @@ class BottomDock(QTabWidget):
 
     def log(self, text):
         stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_view.appendPlainText(f"{stamp}  {text}")
+        try:
+            self.log_view.appendPlainText(f"{stamp}  {text}")
+        except RuntimeError:
+            pass  # the dock's widgets were already destroyed (window closed mid-solve)
+
+    def show_utilisation_curve(self, curve, operating_speed=None):
+        """curve is failure_analysis.assess_npz()'s result["curve"] dict."""
+        self.utilisation_plot.set_curve(
+            curve.get("wind_speed_m_s"), curve.get("utilization"), operating_speed
+        )
+        self.setCurrentWidget(self.graphs_page)

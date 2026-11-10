@@ -188,8 +188,8 @@ def plot_stress_component(
         "yy": (1, "Stress YY"),
         "zz": (2, "Stress ZZ"),
         "xy": (3, "Shear Stress XY"),
-        "xz": (4, "Shear Stress YZ"),
-        "yz": (5, "Shear Stress ZX"),
+        "xz": (4, "Shear Stress XZ"),
+        "yz": (5, "Shear Stress YZ"),
     }
 
     if component not in components:
@@ -343,8 +343,8 @@ def plot_strain_component(
 
     shear_components = {
         "xy": (0, "Engineering Shear Strain XY"),
-        "xz": (1, "Engineering Shear Strain YZ"),
-        "yz": (2, "Engineering Shear Strain ZX"),
+        "xz": (1, "Engineering Shear Strain XZ"),
+        "yz": (2, "Engineering Shear Strain YZ"),
     }
 
     if component in normal_components:
@@ -479,88 +479,54 @@ def plot_displacement(
 
 
 def enable_element_selection(plotter, grid, on_element_selected=None):
+    if getattr(plotter, "_picking_attached", False):
+        return  # already wired for this plotter instance — don't stack another observer
+    plotter._picking_attached = True
 
     from vtk import vtkCellPicker
 
     picker = vtkCellPicker()
     picker.SetTolerance(0.005)
 
-    selected = {
-        "actor": None,
-        "grid": None,
-        "element_id": None,
-    }
+    selected = {"actor": None, "grid": None, "element_id": None}
 
     def handle_click(interactor, event):
-
-        print("PICKING CALLBACK ACTIVATED", flush=True)
-
         x, y = interactor.GetEventPosition()
-
         hit = picker.Pick(x, y, 0, plotter.renderer)
-
         if not hit:
-            print("Nothing picked.", flush=True)
             return
 
         cell_id = picker.GetCellId()
         picked_dataset = picker.GetDataSet()
-
         if cell_id < 0 or picked_dataset is None:
-            print("Invalid picked cell.", flush=True)
             return
 
-        original_ids = picked_dataset.GetCellData().GetArray(
-            "original_cell_id"
-        )
-
+        original_ids = picked_dataset.GetCellData().GetArray("original_cell_id")
         if original_ids is None:
-            print("Original cell ID array not found.", flush=True)
             return
 
         original_cell_id = int(original_ids.GetTuple1(cell_id))
-
         if not (0 <= original_cell_id < grid.n_cells):
-            print("Invalid original cell ID.", flush=True)
             return
 
         element_id = original_cell_id + 1
-
-        print(f"Selected element ID: {element_id}", flush=True)
-
         if selected["element_id"] == element_id:
             return
 
         selected_grid = grid.extract_cells([original_cell_id])
-
         if selected["actor"] is None:
-
             selected["grid"] = selected_grid
-
             selected["actor"] = plotter.add_mesh(
-                selected["grid"],
-                color="white",
-                show_edges=True,
-                edge_color="black",
-                line_width=3,
-                pickable=False,
-                reset_camera=False,
-                name="selected_element",
+                selected["grid"], color="white", show_edges=True,
+                edge_color="black", line_width=3, pickable=False,
+                reset_camera=False, name="selected_element",
             )
-
         else:
             selected["grid"].shallow_copy(selected_grid)
 
         selected["element_id"] = element_id
-
         if on_element_selected is not None:
-            on_element_selected(original_cell_id,element_id)
-
+            on_element_selected(original_cell_id, element_id)
         plotter.render()
 
-    print("VTK cell picker enabled", flush=True)
-
-    plotter.iren.add_observer(
-        "LeftButtonPressEvent",
-        handle_click,
-    )
+    plotter.iren.add_observer("LeftButtonPressEvent", handle_click)

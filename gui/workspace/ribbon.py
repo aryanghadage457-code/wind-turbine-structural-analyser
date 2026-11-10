@@ -42,7 +42,7 @@ TABS = {
         ("Edit", [("geometry.dimensions", "Dimensions", "dimensions", True)]),
     ],
     "Setup": [
-        ("Environment", [("setup.wind", "Wind", "wind", True)]),
+        ("Environment", [("setup.wind", "Wind", "wind", True)]),    
         ("Mesh", [("setup.mesh", "Mesh\nSettings", "mesh", True)]),
     ],
     "Solution": [
@@ -52,8 +52,8 @@ TABS = {
     "Results": [
         ("Contours", [("results.stress", "Stress", "contour", False),
                       ("results.displacement", "Displacement", "displacement", False)]),
-        ("Surface", [("results.outer", "Outer", "outer", False),
-                     ("results.inner", "Inner", "inner", False)]),
+        ("Surface", [("results.outer", "Outer", "outer", False, True, True),
+                     ("results.inner", "Inner", "inner", False, True, False)]),
         ("Failure", [("results.failure", "Failure\nSpeed", "warning", False)]),
     ],
 }
@@ -104,7 +104,7 @@ class Ribbon(QWidget):
         # ---------- ribbon body ----------
         body = QFrame()
         body.setObjectName("RibbonBody")
-        body.setFixedHeight(116)
+        body.setFixedHeight(88)
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -157,8 +157,8 @@ class Ribbon(QWidget):
                 btn = QToolButton()
                 btn.setObjectName("RibbonButton")
                 btn.setText(label)
-                btn.setIcon(_safe_icon(icon_name))
-                btn.setIconSize(QSize(26, 26))
+                btn.setIcon(_safe_icon(icon_name, size=20))
+                btn.setIconSize(QSize(20, 20))
                 btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.setEnabled(enabled)
@@ -196,6 +196,11 @@ class Ribbon(QWidget):
     def set_action_enabled(self, action_id, enabled):
         if action_id in self.buttons:
             self.buttons[action_id].setEnabled(enabled)
+
+    def set_action_checked(self, action_id, checked):
+        btn = self.buttons.get(action_id)
+        if btn is not None and btn.isCheckable():
+            btn.setChecked(checked)
 
 
 if __name__ == "__main__":

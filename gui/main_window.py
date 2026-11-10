@@ -49,7 +49,8 @@ class MainWindow(QMainWindow):
             f"{self.project_name} - Wind Turbine Structural Analyser"
         )
         self.setMinimumSize(1100, 700)
-        self._solver = None 
+        self._solver = None
+        self._results_viewer = None
 
         # ---------- widgets ----------
         self.ribbon = Ribbon(self.project_name)
@@ -139,7 +140,7 @@ class MainWindow(QMainWindow):
             self.status.set_status(f"Selected {name}")
             self.viewport.select_component(name)
         else:
-            self.graphics.set_caption("Graphics")
+            self.graphics.set_caption("3D Viewport")
             self.status.set_status("Ready")
             self.viewport.select_component(None)
 
@@ -207,6 +208,9 @@ class MainWindow(QMainWindow):
         if action_id == "results.displacement":
             self._show_results_view("Displacement")
             return
+        if action_id in ("results.outer", "results.inner"):
+            self._set_results_surface("outer" if action_id == "results.outer" else "inner")
+            return
 
         
         self.dock.add_message(f"'{action_id}' is not connected yet.", "warning")
@@ -244,11 +248,31 @@ class MainWindow(QMainWindow):
 
 
     def _on_close_project(self):
+        self._stop_solver()
         self.close_requested.emit()
 
     def shutdown(self):
         """Called by the owner before this window is discarded."""
+        self._stop_solver()
         self.viewport.shutdown()
+
+    def _stop_solver(self):
+        """Cancel any running solve and detach its signals before this
+        window's widgets (including the dock) are destroyed. Without this,
+        a solve that outlives the window keeps emitting `progress` into a
+        dock that no longer exists, which crashes with 'Internal C++
+        object already deleted.'"""
+        if self._solver is not None:
+            try:
+                self._solver.progress.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                self._solver.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self._solver.cancel()
+            self._solver = None
 
     def _open_wind_dialog(self):
         current = self.project_data.get("wind", {})
@@ -347,6 +371,8 @@ class MainWindow(QMainWindow):
                 self.details.update_section("Results", rows)
                 self.outline.tree.set_status("Results", "done")
                 self.dock.add_message(format_report(result))
+                op_speed = self.project_data.get("wind", {}).get("v_ref")
+                self.dock.show_utilisation_curve(result["curve"], operating_speed=op_speed)
             else:
                 self.dock.add_message(
                     "Solve finished but no failure_assessment.json was found.", "warning"
@@ -355,6 +381,8 @@ class MainWindow(QMainWindow):
             self.ribbon.set_action_enabled("results.stress", True)
             self.ribbon.set_action_enabled("results.displacement", True)
             self.ribbon.set_action_enabled("results.failure", True)
+            self.ribbon.set_action_enabled("results.outer", True)
+            self.ribbon.set_action_enabled("results.inner", True)
         else:
             self.status.set_status("Solve failed")
             self.dock.add_message("Solve failed. Check the Log tab for details.", "error")
@@ -381,8 +409,17 @@ class MainWindow(QMainWindow):
             if idx >= 0:
                 viewer.quantity_box.setCurrentIndex(idx)
 
+        self._results_viewer = viewer
+        self._set_results_surface("outer")
+
         self.graphics.set_viewport(viewer)
         self.graphics.set_caption("Results")
+
+    def _set_results_surface(self, surface):
+        self.ribbon.set_action_checked("results.outer", surface == "outer")
+        self.ribbon.set_action_checked("results.inner", surface == "inner")
+        if self._results_viewer is not None:
+            self._results_viewer.set_surface(surface)
 
 if __name__ == "__main__":
     import sys

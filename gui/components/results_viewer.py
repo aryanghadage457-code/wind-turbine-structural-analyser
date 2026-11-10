@@ -17,6 +17,9 @@ from visualization import contour_plots as cp
 from visualization.contour_plots import enable_element_selection
 from gui.components.element_details_panel import ElementDetailsPanel
 
+def _finite(value):
+    return value == value and abs(value) != float("inf")
+
 BACKGROUND = "#171614"
 
 # Scalar-bar styling — light backing panel + dark bold text so the legend
@@ -82,6 +85,8 @@ class ResultsViewer(QWidget):
         self.surface_box = QComboBox()
         self.surface_box.addItems(["outer", "inner"])
         self.surface_box.currentTextChanged.connect(self._refresh)
+        # surface is now chosen from the ribbon, not shown anywhere — this
+        # combo is never added to a layout and must never be shown/hidden.
 
         self.details_toggle = QToolButton()
         self.details_toggle.setObjectName("ViewButton")
@@ -92,8 +97,6 @@ class ResultsViewer(QWidget):
         t.addWidget(QLabel("Quantity:"))
         t.addWidget(self.quantity_box)
         t.addWidget(self.sub_box)
-        t.addWidget(QLabel("Surface:"))
-        t.addWidget(self.surface_box)
         t.addStretch()
         t.addWidget(self.details_toggle)
         root.addWidget(toolbar)
@@ -137,7 +140,6 @@ class ResultsViewer(QWidget):
         else:
             self.sub_box.setVisible(False)
         self.sub_box.blockSignals(False)
-        self.surface_box.setVisible(quantity != "Displacement")
         self._refresh()
 
     def _refresh(self):
@@ -190,27 +192,74 @@ class ResultsViewer(QWidget):
         self.plotter.render()
         self.status_message.emit(f"Showing {quantity}" + (f" ({surface})" if quantity != "Displacement" else "") + ".")
 
-    def _brighten_scalar_bar(self):
-        """Give the colour-legend a light backing panel and dark bold text
-        so it stays readable against the dark 3D background, regardless of
-        the colour map underneath it."""
-        try:
-            for actor in self.plotter.scalar_bars.values():
-                for tp in (actor.GetLabelTextProperty(), actor.GetTitleTextProperty()):
-                    tp.SetColor(*_BAR_TEXT)
-                    tp.SetBold(True)
-                    tp.SetShadow(False)
-                actor.DrawBackgroundOn()
-                bg = actor.GetBackgroundProperty()
-                bg.SetColor(*_BAR_BG)
-                bg.SetOpacity(_BAR_BG_OPACITY)
-        except Exception:
-            pass
 
     def _on_element_selected(self, original_cell_id, element_id):
         self.details_panel.show_element(original_cell_id)
         if not self.details_toggle.isChecked():
             self.details_toggle.setChecked(True)
+
+    def set_surface(self, surface):
+        """Called from the ribbon's Outer/Inner buttons."""
+        idx = self.surface_box.findText(surface)
+        if idx >= 0:
+            self.surface_box.setCurrentIndex(idx)
+
+    def _brighten_scalar_bar(self):
+        """Light backing panel, bold title + value labels, readable
+        against the dark 3D background. Fixed label count and a clean
+        format so the numbers never overlap or drop into scientific
+        notation, and enough height/position margin that neither the
+        title nor the top tick label gets clipped."""
+        try:
+            for actor in self.plotter.scalar_bars.values():
+                actor.SetNumberOfLabels(5)
+                actor.SetLabelFormat(self._label_format())
+
+                title_tp = actor.GetTitleTextProperty()
+                title_tp.SetFontSize(14)
+                title_tp.SetColor(*_BAR_TEXT)
+                title_tp.SetBold(True)
+                title_tp.SetShadow(False)
+
+                actor.UnconstrainedFontSizeOn()
+                label_tp = actor.GetLabelTextProperty()
+                label_tp.SetFontSize(13)
+                label_tp.SetColor(*_BAR_TEXT)
+                label_tp.SetBold(True)
+                label_tp.SetShadow(False)
+
+                actor.DrawBackgroundOn()
+                bg = actor.GetBackgroundProperty()
+                bg.SetColor(*_BAR_BG)
+                bg.SetOpacity(_BAR_BG_OPACITY)
+                actor.SetWidth(0.13)
+                actor.SetHeight(0.55)
+                actor.SetPosition(0.84, 0.20)
+        except Exception:
+            pass
+
+    def _label_format(self):
+        """Pick a fixed-decimal format from the active data range, instead
+        of VTK's default variable-precision one (the source of the
+        "0.000349" / truncated-digit labels)."""
+        try:
+            mapper = self.plotter.mapper
+            rng = mapper.GetScalarRange() if mapper is not None else None
+        except Exception:
+            rng = None
+        if not rng or not all(map(_finite, rng)):
+            return "%.2f"
+        span = abs(rng[1] - rng[0])
+        if span == 0:
+            return "%.2f"
+        if span >= 100:
+            return "%.0f"
+        if span >= 1:
+            return "%.1f"
+        if span >= 0.001:
+            return "%.4f"
+        return "%.2e"
+
 
     def shutdown(self):
         if self.plotter is not None:

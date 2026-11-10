@@ -33,7 +33,7 @@ class DetailsPanel(Panel):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.setColumnWidth(0, 120)
+        self.table.setColumnWidth(0, 160)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
@@ -51,12 +51,7 @@ class DetailsPanel(Panel):
             self.table.setItem(r, 1, QTableWidgetItem(str(value)))
         self.table.resizeRowsToContents()
 
-    def update_section(self, name, rows):
-        """Store computed results for a named section (e.g. 'Results') and refresh if shown."""
-        self._live_sections = getattr(self, "_live_sections", {})
-        self._live_sections[name] = rows
-        if self._current == (name, "section"):
-            self.set_rows(rows)
+
     def update_section(self, name, rows):
         """Store computed results for a named section (e.g. 'Results') and refresh if shown."""
         self._live_sections = getattr(self, "_live_sections", {})

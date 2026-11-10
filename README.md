@@ -72,7 +72,6 @@ Screenshots and short GIF recordings make it easier for a new user to understand
 ## Application Demonstrations
 ![Animation 1](media/demos/Animation1.gif) #1
 
-### Additional Demonstrations
 ![Animation](media/demos/Animation.gif) #2
 
 ### Running Structural Analysis

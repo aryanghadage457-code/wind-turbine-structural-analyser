@@ -237,6 +237,6 @@ The GUI's results viewer expects full_mesh.pkl and stress_strain_results.npz in 
 Use the software for learning and project evaluation. Do not use its output as the sole basis for safety-critical or certified engineering decisions.
 # Acknowledgements
 The default turbine reference data draws on the NREL 5-MW reference turbine material, including NREL report NREL/TP-500-38060. Additional model dimensions and assumptions should be identified as project assumptions where applicable.
-Maintained by: Aryan Pandurang ghadage/Mechanics of solids?/IIT Hyderabad
+Maintained by: Aryan Pandurang ghadage/Mechanics of solids/IIT Hyderabad
 
 Repository: https://github.com/aryanghadage457-code/wind-turbine-structural-analyser

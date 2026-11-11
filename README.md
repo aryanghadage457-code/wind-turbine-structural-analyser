@@ -40,7 +40,7 @@ The desktop application is built with PySide6 and uses the project’s geometry,
 - Desktop GUI for project setup, solving, and reviewing results.
 - 3D result visualisation and element-level result inspection when the required output files are available.
 # Screenshots and Demo GIFs
-Screenshots and short GIF recordings make it easier for a new user to understand the application before installing it. Store these assets inside the repository under media/ and reference them with relative paths in this README.
+
 
 ---
 
